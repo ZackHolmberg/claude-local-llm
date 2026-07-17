@@ -186,9 +186,16 @@ def _log_usage(
     input_tokens_avoided: int,
     output_tokens_avoided: int,
     returned_chars: int,
+    *,
+    duration_ms: float | None = None,
+    sources: list[str] | None = None,
+    mode: str | None = None,
+    n_chunks: int | None = None,
+    error: str | None = None,
 ) -> None:
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "event": "call",
         "tool": tool,
         "model": MODEL,
         "local_prompt_tokens": usage.get("prompt_tokens", 0),
@@ -197,6 +204,16 @@ def _log_usage(
         "output_tokens_avoided": output_tokens_avoided,
         "tokens_returned_to_claude": _est_tokens(returned_chars),
     }
+    if duration_ms is not None:
+        entry["duration_ms"] = round(duration_ms)
+    if sources:
+        entry["sources"] = sources
+    if mode:
+        entry["mode"] = mode
+    if n_chunks:
+        entry["n_chunks"] = n_chunks
+    if error:
+        entry["error"] = error
     with open(USAGE_LOG, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
@@ -250,9 +267,20 @@ def delegate(
     confirmation. Give a self-contained instruction: the local model sees
     ONLY what you pass here, not the conversation.
     """
-    gathered, file_chars = _gather_input(input_files, input_text)
-    prompt = f"{instruction}\n\n{gathered}" if gathered else instruction
-    result, usage = _generate(prompt, max_tokens)
+    t0 = time.monotonic()
+    try:
+        gathered, file_chars = _gather_input(input_files, input_text)
+        prompt = f"{instruction}\n\n{gathered}" if gathered else instruction
+        result, usage = _generate(prompt, max_tokens)
+    except Exception as e:
+        _log_usage(
+            "delegate", {}, 0, 0, 0,
+            duration_ms=(time.monotonic() - t0) * 1000,
+            sources=input_files,
+            error=f"{type(e).__name__}: {e}",
+        )
+        raise
+    duration_ms = (time.monotonic() - t0) * 1000
     if output_file:
         result = _strip_fences(result)
         out = Path(output_file).expanduser()
@@ -270,6 +298,8 @@ def delegate(
             input_tokens_avoided=_est_tokens(file_chars),
             output_tokens_avoided=usage.get("completion_tokens", 0),
             returned_chars=len(reply),
+            duration_ms=duration_ms,
+            sources=input_files,
         )
         return reply
     _log_usage(
@@ -278,6 +308,8 @@ def delegate(
         input_tokens_avoided=_est_tokens(file_chars),
         output_tokens_avoided=0,
         returned_chars=len(result),
+        duration_ms=duration_ms,
+        sources=input_files,
     )
     return result
 
@@ -298,24 +330,40 @@ def summarize(
     WebFetch for long documentation pages, when you don't need exact
     contents.
     """
-    gathered, file_chars = _gather_input(input_files, input_text)
-    if not gathered:
-        return "Error: provide input_files and/or input_text."
-    task = (
-        f"Answer this about the content below, citing specifics: {focus}"
-        if focus
-        else "Summarize the content below: purpose, structure, and notable details."
-    )
-    if len(gathered) > MAP_REDUCE_THRESHOLD:
-        result, usage = _map_reduce(task, gathered, max_tokens)
-    else:
-        result, usage = _generate(f"{task}\n\n{gathered}", max_tokens)
+    t0 = time.monotonic()
+    try:
+        gathered, file_chars = _gather_input(input_files, input_text)
+        if not gathered:
+            return "Error: provide input_files and/or input_text."
+        task = (
+            f"Answer this about the content below, citing specifics: {focus}"
+            if focus
+            else "Summarize the content below: purpose, structure, and notable details."
+        )
+        if len(gathered) > MAP_REDUCE_THRESHOLD:
+            result, usage = _map_reduce(task, gathered, max_tokens)
+            mode = "map_reduce"
+        else:
+            result, usage = _generate(f"{task}\n\n{gathered}", max_tokens)
+            mode = "single_shot"
+    except Exception as e:
+        _log_usage(
+            "summarize", {}, 0, 0, 0,
+            duration_ms=(time.monotonic() - t0) * 1000,
+            sources=input_files,
+            error=f"{type(e).__name__}: {e}",
+        )
+        raise
     _log_usage(
         "summarize",
         usage,
         input_tokens_avoided=_est_tokens(file_chars),
         output_tokens_avoided=0,
         returned_chars=len(result),
+        duration_ms=(time.monotonic() - t0) * 1000,
+        sources=input_files,
+        mode=mode,
+        n_chunks=usage.pop("n_chunks", None),
     )
     return result
 
@@ -364,6 +412,7 @@ def _map_reduce(task: str, gathered: str, max_tokens: int) -> tuple[str, dict]:
         if ABSTAIN in text and len(text) < 40:
             continue
         answers.append(f"[excerpt {i}] {text}")
+    total["n_chunks"] = len(chunks)
     if not answers:
         return (
             "No relevant content found for this task in the provided input.",
@@ -408,13 +457,24 @@ def edit(
     otherwise a ranged Read of the changed regions."""
     import difflib
 
+    t0 = time.monotonic()
+
+    def _fail(reply: str, code: str, usage: dict | None = None) -> str:
+        _log_usage(
+            "edit", usage or {}, 0, 0, len(reply),
+            duration_ms=(time.monotonic() - t0) * 1000,
+            sources=[input_file], error=code,
+        )
+        return reply
+
     src = Path(input_file).expanduser()
     original = src.read_text(errors="replace")
     if len(original) > EDIT_MAX_CHARS:
-        return (
+        return _fail(
             f"Error: {src} is {len(original)} chars, over the "
             f"{EDIT_MAX_CHARS}-char single-pass edit limit. Edit it "
-            f"yourself with ranged Reads, or split the work."
+            f"yourself with ranged Reads, or split the work.",
+            "file_too_large",
         )
     prompt = (
         "Apply the following edit instruction to the file below. Output the "
@@ -428,16 +488,26 @@ def edit(
         f'<file path="{src}">\n{original}\n</file>'
     )
     max_tokens = min(16_384, max(2_048, len(original) // 2))
-    result, usage = _generate(prompt, max_tokens=max_tokens)
+    try:
+        result, usage = _generate(prompt, max_tokens=max_tokens)
+    except Exception as e:
+        _fail("", f"{type(e).__name__}: {e}")
+        raise
     if usage.get("finish_reason") == "length":
-        return (
+        return _fail(
             "Error: the local model's output was truncated before the end "
             "of the file; nothing was written. The file is too large or the "
-            "edit too expansive for a single pass - do this edit yourself."
+            "edit too expansive for a single pass - do this edit yourself.",
+            "output_truncated",
+            usage,
         )
     result = _strip_fences(result)
     if not result.strip():
-        return "Error: the local model returned empty output; nothing was written."
+        return _fail(
+            "Error: the local model returned empty output; nothing was written.",
+            "empty_output",
+            usage,
+        )
 
     out = Path(output_file).expanduser() if output_file else src
     out.write_text(result + ("" if result.endswith("\n") else "\n"))
@@ -462,6 +532,8 @@ def edit(
         input_tokens_avoided=_est_tokens(len(original)),
         output_tokens_avoided=_est_tokens(added_chars),
         returned_chars=len(reply),
+        duration_ms=(time.monotonic() - t0) * 1000,
+        sources=[input_file],
     )
     return reply
 
@@ -470,15 +542,20 @@ def _build_report() -> str:
     if not USAGE_LOG.exists():
         return "No delegated calls logged yet."
     entries = [json.loads(line) for line in USAGE_LOG.read_text().splitlines() if line]
-    calls = len(entries)
-    input_avoided = sum(e["input_tokens_avoided"] for e in entries)
-    output_avoided = sum(e["output_tokens_avoided"] for e in entries)
-    returned = sum(e["tokens_returned_to_claude"] for e in entries)
+    calls = [e for e in entries if e.get("event", "call") == "call"]
+    deflections = [e for e in entries if e.get("event") == "deflection"]
+    if not calls and not deflections:
+        return "No delegated calls logged yet."
+    input_avoided = sum(e["input_tokens_avoided"] for e in calls)
+    output_avoided = sum(e["output_tokens_avoided"] for e in calls)
+    returned = sum(e["tokens_returned_to_claude"] for e in calls)
     net_input = input_avoided - returned
     first = entries[0]["ts"][:10]
+    failed = sum(1 for e in calls if "error" in e)
 
     lines = [
-        f"Local-LLM savings since {first} ({calls} delegated calls)",
+        f"Local-LLM savings since {first} "
+        f"({len(calls)} delegated calls, {failed} failed)",
         "",
         f"  Input tokens avoided (files Claude never read):    {input_avoided:>10,}",
         f"  Output tokens avoided (content written to disk):   {output_avoided:>10,}",
@@ -490,6 +567,47 @@ def _build_report() -> str:
     for model, (in_price, out_price) in CLAUDE_PRICING.items():
         saved = (net_input * in_price + output_avoided * out_price) / 1_000_000
         lines.append(f"    at {model} rates:  ${saved:,.4f}")
+
+    lines.extend(["", "  Reliability / latency by tool:"])
+    for tool in sorted({e["tool"] for e in calls}):
+        tcalls = [e for e in calls if e["tool"] == tool]
+        errs = [e for e in tcalls if "error" in e]
+        durations = [e["duration_ms"] for e in tcalls if "duration_ms" in e]
+        stat = f"    {tool}: {len(tcalls)} calls, {len(errs)} failed"
+        if durations:
+            stat += (
+                f", avg {sum(durations) / len(durations) / 1000:.1f}s"
+                f", max {max(durations) / 1000:.1f}s"
+            )
+        mr = [e for e in tcalls if e.get("mode") == "map_reduce"]
+        if mr:
+            chunks = [e["n_chunks"] for e in mr if e.get("n_chunks")]
+            avg_chunks = f", avg {sum(chunks) / len(chunks):.0f} chunks" if chunks else ""
+            stat += f" (map-reduce x{len(mr)}{avg_chunks})"
+        lines.append(stat)
+        for code, count in sorted(
+            {e["error"]: sum(1 for x in errs if x["error"] == e["error"]) for e in errs}.items()
+        ):
+            lines.append(f"      error: {code} x{count}")
+
+    if deflections:
+        deflected_files = {e["file"] for e in deflections}
+        summarized_files = {
+            s for e in calls if e["tool"] == "summarize" for s in e.get("sources") or []
+        }
+        followed = sum(1 for f in deflected_files if f in summarized_files)
+        lines.extend(
+            [
+                "",
+                "  Read-guard funnel:",
+                f"    deflections: {len(deflections)} "
+                f"({len(deflected_files)} distinct files)",
+                f"    later summarized via local model: {followed} files",
+                f"    not delegated (ranged-Read workaround or dropped): "
+                f"{len(deflected_files) - followed} files",
+            ]
+        )
+
     lines.append("")
     lines.append(
         "  Counts are approximate: file/return sizes use chars/4; avoided "

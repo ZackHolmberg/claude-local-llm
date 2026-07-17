@@ -16,7 +16,10 @@ when exact contents matter (e.g. before an Edit).
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+
+LEDGER = Path(__file__).resolve().parent.parent / "usage.jsonl"
 
 # (max_lines, max_bytes) per tier
 TIERS = {
@@ -57,6 +60,24 @@ def classify(path: Path) -> str:
     return "default"
 
 
+def log_deflection(path: Path, tier: str, size: int, lines: int | None) -> None:
+    """Record the deflection in the shared ledger so the savings report can
+    show the funnel: deflections -> summarize calls. Never blocks on failure."""
+    try:
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "event": "deflection",
+            "file": str(path),
+            "tier": tier,
+            "size_bytes": size,
+            "lines": lines,
+        }
+        with open(LEDGER, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
 def deny(reason: str) -> None:
     print(
         json.dumps(
@@ -93,6 +114,7 @@ def main() -> None:
     max_bytes = int(os.environ.get("LOCAL_LLM_HOOK_MAX_BYTES", max_bytes))
 
     size = path.stat().st_size
+    lines: int | None = None
     if size <= max_bytes:
         try:
             with open(path, errors="replace") as f:
@@ -105,6 +127,7 @@ def main() -> None:
     else:
         detail = f"{size // 1024} KB"
 
+    log_deflection(path, tier, size, lines)
     deny(
         f"large-read-guard: {path} is {detail}, over the {max_lines}-line/"
         f"{max_bytes // 1024} KB limit for {tier} files. To save context, "
