@@ -102,18 +102,58 @@ def _ensure_server() -> None:
     )
 
 
+def _html_to_text(html_src: str) -> str:
+    from html import unescape
+
+    text = re.sub(r"(?is)<(script|style|noscript|svg|head)[^>]*>.*?</\1>", " ", html_src)
+    text = re.sub(r"(?i)<(br|/p|/div|/li|/h[1-6]|/tr|/section|/article)[^>]*>", "\n", text)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = unescape(text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n ?", "\n", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _fetch_url(url: str) -> str:
+    resp = httpx.get(
+        url,
+        timeout=30,
+        follow_redirects=True,
+        headers={"User-Agent": "claude-local-llm/1.0"},
+    )
+    resp.raise_for_status()
+    if "html" in resp.headers.get("content-type", ""):
+        return _html_to_text(resp.text)
+    return resp.text
+
+
 def _gather_input(
     input_files: list[str] | None, input_text: str | None
 ) -> tuple[str, int]:
-    """Returns (combined input text, chars that came from files).
+    """Returns (combined input text, chars that came from files/URLs).
 
-    File-derived chars are what Claude avoided reading; `input_text` came from
-    Claude's context already, so it never counts as savings.
+    File- and URL-derived chars are what Claude avoided reading; `input_text`
+    came from Claude's context already, so it never counts as savings.
     """
     parts: list[str] = []
     file_chars = 0
     budget = MAX_INPUT_CHARS
     for raw_path in input_files or []:
+        if raw_path.startswith(("http://", "https://")):
+            try:
+                text = _fetch_url(raw_path)
+            except httpx.HTTPError as e:
+                parts.append(f'<url href="{raw_path}" error="{e}"/>')
+                continue
+            if len(text) > budget:
+                text = text[: max(budget, 2_000)] + "\n...[truncated]..."
+            budget -= len(text)
+            file_chars += len(text)
+            parts.append(f'<url href="{raw_path}">\n{text}\n</url>')
+            if budget <= 0:
+                parts.append("[input budget exhausted; remaining inputs omitted]")
+                break
+            continue
         path = Path(raw_path).expanduser()
         text = path.read_text(errors="replace")
         if len(text) > budget:
@@ -186,20 +226,22 @@ def delegate(
     output_file: str | None = None,
     max_tokens: int = 4096,
 ) -> str:
-    """Offload a mechanical, non-reasoning task to a fast local model to save
-    Claude tokens. Ideal for: generating boilerplate, test fixtures, mock
-    data, docstrings, or repetitive code; extracting or reformatting data;
-    converting between formats; drafting routine docs; bulk find-and-describe
-    work over files.
+    """Offload a mechanical task to a fast local model to save Claude tokens.
 
-    NOT for tasks needing careful reasoning, debugging, architectural
-    decisions, or correctness-critical logic - do those yourself.
+    The rule is compression ratio: delegate when your instruction is much
+    smaller than the content it produces or consumes, and correctness is
+    checkable at a glance. ALWAYS delegate (with `output_file`): test
+    fixtures, mock/sample data, boilerplate and scaffolding, format
+    conversions, docstring/comment passes, README/doc drafts, repetitive
+    near-identical code. NEVER delegate: logic, algorithms, debugging,
+    anything you would need to reason about line-by-line - if specifying the
+    task takes as many tokens as doing it, do it yourself.
 
-    Pass large inputs via `input_files` (absolute paths) instead of pasting
-    content, and set `output_file` for bulk output - then the content never
-    enters your context and you only see a short confirmation. Give a
-    self-contained instruction: the local model sees ONLY what you pass here,
-    not the conversation.
+    Pass large inputs via `input_files` (absolute paths or http(s) URLs)
+    instead of pasting content, and set `output_file` for bulk output - then
+    the content never enters your context and you only see a short
+    confirmation. Give a self-contained instruction: the local model sees
+    ONLY what you pass here, not the conversation.
     """
     gathered, file_chars = _gather_input(input_files, input_text)
     prompt = f"{instruction}\n\n{gathered}" if gathered else instruction
@@ -240,12 +282,14 @@ def summarize(
     focus: str | None = None,
     max_tokens: int = 1024,
 ) -> str:
-    """Summarize large files, logs, diffs, or docs with a local model instead
-    of reading them yourself - a major token saving whenever a file is big
-    and you only need the gist or a specific answer from it. Pass absolute
-    paths via `input_files`; use `focus` to ask a pointed question (e.g.
-    "which requests failed and why?"). Prefer this over Read for any file
-    over a few hundred lines when you don't need exact contents.
+    """Summarize large files, logs, diffs, docs, or web pages with a local
+    model instead of reading them yourself - a major token saving whenever
+    the content is big and you only need the gist or a specific answer from
+    it. Pass absolute paths or http(s) URLs via `input_files`; use `focus`
+    to ask a pointed question (e.g. "which requests failed and why?").
+    Prefer this over Read for any file over a few hundred lines, and over
+    WebFetch for long documentation pages, when you don't need exact
+    contents.
     """
     gathered, file_chars = _gather_input(input_files, input_text)
     if not gathered:

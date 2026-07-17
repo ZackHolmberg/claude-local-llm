@@ -50,7 +50,8 @@ Re-running `install.sh` is safe (idempotent).
 ## Tools
 
 - **`summarize`** — summarize / answer focused questions about large files,
-  logs, diffs, docs. Used instead of Read for big files.
+  logs, diffs, docs, or **web pages** (pass http(s) URLs alongside paths).
+  Used instead of Read for big files and instead of WebFetch for long pages.
 - **`delegate`** — general mechanical generation/transformation: boilerplate,
   fixtures, mock data, format conversion, docstrings. With `output_file`,
   bulk output goes straight to disk.
@@ -63,10 +64,18 @@ delegate. `hooks/read_guard.py` makes the clear-cut case deterministic: a
 intercepts Claude's `Read` calls and **blocks** full reads of large text
 files with a message steering Claude to `summarize` instead.
 
-Rules:
+Thresholds are **tiered by file kind**, encoding *why* a file gets read:
 
-- Blocks when a file exceeds **400 lines** or **64 KB** (override with
-  `LOCAL_LLM_HOOK_MAX_LINES` / `LOCAL_LLM_HOOK_MAX_BYTES` env vars).
+| Tier | Matches | Limit | Rationale |
+|---|---|---|---|
+| data | `.log` `.csv` `.jsonl`, lockfiles, `.min.*`, `node_modules`/`vendor`/`dist`/`build` paths | 150 lines / 32 KB | The gist is almost always enough |
+| source | `.py` `.ts` `.go` `.rs` etc. | 800 lines / 128 KB | Claude often needs code verbatim to edit correctly |
+| default | everything else (docs, configs) | 400 lines / 64 KB | In between |
+
+Other rules:
+
+- `LOCAL_LLM_HOOK_MAX_LINES` / `LOCAL_LLM_HOOK_MAX_BYTES` env vars override
+  whichever tier matched.
 - **Ranged Reads (offset/limit) always pass** — the escape hatch when Claude
   needs exact contents, e.g. before an Edit.
 - Images, PDFs, and notebooks are exempt (Read handles those natively).
