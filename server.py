@@ -218,9 +218,11 @@ def _generate(prompt: str, max_tokens: int, temperature: float = 0.2) -> tuple[s
     )
     resp.raise_for_status()
     data = resp.json()
-    content = data["choices"][0]["message"]["content"]
-    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
-    return content.strip(), data.get("usage", {})
+    choice = data["choices"][0]
+    content = re.sub(r"<think>.*?</think>", "", choice["message"]["content"], flags=re.DOTALL)
+    usage = data.get("usage", {})
+    usage["finish_reason"] = choice.get("finish_reason")
+    return content.strip(), usage
 
 
 @mcp.tool()
@@ -378,6 +380,90 @@ def _map_reduce(task: str, gathered: str, max_tokens: int) -> tuple[str, dict]:
     )
     _acc(total, usage)
     return text, total
+
+
+EDIT_MAX_CHARS = 40_000
+
+
+@mcp.tool()
+def edit(
+    instruction: str,
+    input_file: str,
+    output_file: str | None = None,
+) -> str:
+    """Architect/editor split: you describe a mechanical edit in prose, the
+    local model rewrites the file, and you review cheaply with `git diff` -
+    reading a diff costs input tokens instead of generating the whole change
+    as 5x-priced output tokens.
+
+    Use for bulk mechanical rewrites of one file: renaming a symbol
+    throughout, docstring/comment passes, reformatting or style migrations,
+    converting a repeated pattern, reordering/sorting entries. NOT for logic
+    changes, bug fixes, or anything needing line-by-line reasoning - use
+    your own Edit tool for those.
+
+    The instruction must be self-contained (the local model sees only the
+    file, not the conversation). `output_file` defaults to editing in place.
+    ALWAYS review the result afterwards - `git diff <file>` if tracked,
+    otherwise a ranged Read of the changed regions."""
+    import difflib
+
+    src = Path(input_file).expanduser()
+    original = src.read_text(errors="replace")
+    if len(original) > EDIT_MAX_CHARS:
+        return (
+            f"Error: {src} is {len(original)} chars, over the "
+            f"{EDIT_MAX_CHARS}-char single-pass edit limit. Edit it "
+            f"yourself with ranged Reads, or split the work."
+        )
+    prompt = (
+        "Apply the following edit instruction to the file below. Output the "
+        "COMPLETE edited file and nothing else - no code fences, no "
+        "commentary. Preserve everything not affected by the instruction "
+        "exactly, including whitespace, comments, and blank lines. Apply the "
+        "instruction EXHAUSTIVELY: if it says 'every' or 'all', first "
+        "mentally enumerate every occurrence in the file, then make sure "
+        "each one is covered - do not stop after the first few.\n\n"
+        f"Edit instruction: {instruction}\n\n"
+        f'<file path="{src}">\n{original}\n</file>'
+    )
+    max_tokens = min(16_384, max(2_048, len(original) // 2))
+    result, usage = _generate(prompt, max_tokens=max_tokens)
+    if usage.get("finish_reason") == "length":
+        return (
+            "Error: the local model's output was truncated before the end "
+            "of the file; nothing was written. The file is too large or the "
+            "edit too expansive for a single pass - do this edit yourself."
+        )
+    result = _strip_fences(result)
+    if not result.strip():
+        return "Error: the local model returned empty output; nothing was written."
+
+    out = Path(output_file).expanduser() if output_file else src
+    out.write_text(result + ("" if result.endswith("\n") else "\n"))
+
+    diff = list(
+        difflib.unified_diff(
+            original.splitlines(), result.splitlines(),
+            fromfile=str(src), tofile=str(out), lineterm="", n=1,
+        )
+    )
+    changed = [l for l in diff if l[:1] in "+-" and l[:3] not in ("+++", "---")]
+    added_chars = sum(len(l) for l in changed if l.startswith("+"))
+    preview = "\n".join(diff[:14])
+    reply = (
+        f"Edited {out}: {len(original.splitlines())} -> "
+        f"{len(result.splitlines())} lines, {len(changed)} diff lines. "
+        f"REVIEW REQUIRED (git diff or ranged Read).\nDiff preview:\n{preview}"
+    )
+    _log_usage(
+        "edit",
+        usage,
+        input_tokens_avoided=_est_tokens(len(original)),
+        output_tokens_avoided=_est_tokens(added_chars),
+        returned_chars=len(reply),
+    )
+    return reply
 
 
 def _build_report() -> str:

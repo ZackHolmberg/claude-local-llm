@@ -62,6 +62,14 @@ Re-running `install.sh` is safe (idempotent).
 - **`delegate`** — general mechanical generation/transformation: boilerplate,
   fixtures, mock data, format conversion, docstrings. With `output_file`,
   bulk output goes straight to disk.
+- **`edit`** — architect/editor split (inspired by
+  [aider](https://aider.chat/2024/09/26/architect.html)): Claude describes a
+  mechanical rewrite in prose (rename a symbol throughout, docstring/comment
+  pass, style migration), the local model emits the edited file, and Claude
+  reviews via `git diff` — cheap input tokens instead of 5x-priced output
+  tokens. Single file, ≤40K chars; refuses to write anything if the local
+  model's output was truncated; the confirmation includes a diff preview and
+  a review reminder.
 
 ## Large-read guard (hook)
 

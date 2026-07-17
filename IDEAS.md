@@ -65,10 +65,13 @@ or MinionS-style chunking. Our differentiators are measurement + enforcement.
    caused every chunk to abstain, since no single chunk can answer order or
    causality. Extract-per-chunk, answer-in-reduce fixed it (this is the
    paper's "single-step instructions" lesson, which we initially violated).
-2. **`edit` tool (architect/editor)** — `edit(instruction, input_file,
-   output_file)`: Claude specs the change in prose, Qwen emits the full
-   edited file, Claude spot-checks with `git diff`. Targets bulk mechanical
-   rewrites (renames across a file, docstring passes, format migrations).
+2. ~~**`edit` tool (architect/editor)**~~ — **DONE (2026-07-17).**
+   Implementation notes: (a) small models under-apply "every X" instructions
+   — an explicit "enumerate every occurrence, apply EXHAUSTIVELY" line in
+   the prompt took a docstring pass from 4/7 to 7/7 coverage; (b) guard
+   against truncation — check `finish_reason == "length"` and refuse to
+   write a half-file; (c) the tool reply embeds a diff preview and a REVIEW
+   REQUIRED reminder so Claude actually inspects the change.
 3. **Self-consistency knob** — `samples: int` on delegate/summarize; run k
    generations and have Qwen merge/vote. Local tokens are free; only costs
    latency. Worth it for extraction where a wrong answer is worse than slow.
