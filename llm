@@ -1,0 +1,8 @@
+#!/bin/bash
+# Wrapper so CLI commands run inside the project venv from anywhere.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ ! -x "$DIR/.venv/bin/python" ]]; then
+  echo "No venv found - run $DIR/install.sh first." >&2
+  exit 1
+fi
+exec "$DIR/.venv/bin/python" "$DIR/cli.py" "$@"

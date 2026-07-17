@@ -25,8 +25,21 @@ from mcp.server.fastmcp import FastMCP
 PROJECT_DIR = Path(__file__).resolve().parent
 VENV_BIN = PROJECT_DIR / ".venv" / "bin"
 
-MODEL = os.environ.get("LOCAL_LLM_MODEL", "mlx-community/Qwen3-14B-4bit")
-PORT = int(os.environ.get("LOCAL_LLM_PORT", "8734"))
+CONFIG_PATH = PROJECT_DIR / "config.json"
+
+
+def _config() -> dict:
+    try:
+        return json.loads(CONFIG_PATH.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+# Precedence: env var > config.json (written by `llm use`) > default.
+MODEL = os.environ.get("LOCAL_LLM_MODEL") or _config().get(
+    "model", "mlx-community/Qwen3-14B-4bit"
+)
+PORT = int(os.environ.get("LOCAL_LLM_PORT") or _config().get("port", 8734))
 BASE_URL = f"http://127.0.0.1:{PORT}"
 SERVER_LOG = PROJECT_DIR / "mlx-server.log"
 USAGE_LOG = PROJECT_DIR / "usage.jsonl"

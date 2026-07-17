@@ -18,6 +18,35 @@ Claude Code ──(MCP stdio)──> server.py ──(HTTP :8734)──> mlx_lm.
   context.
 - `~/.claude/CLAUDE.md` tells Claude when to delegate.
 
+## Installation
+
+Requires Apple Silicon. Clone, then:
+
+```sh
+./install.sh                               # uv + venv + deps + Claude Code MCP registration
+./llm pull mlx-community/Qwen3-14B-4bit    # download a model (~8 GB; needs ~24 GB RAM)
+./llm start                                # optional - the server auto-starts on first tool call
+./llm status                               # verify
+```
+
+Smaller machines: `mlx-community/Qwen3-8B-4bit` (~4.5 GB) then `./llm use` it.
+Re-running `install.sh` is safe (idempotent).
+
+## CLI
+
+`./llm <command>` (a wrapper around `cli.py` running in the project venv):
+
+| Command | What it does |
+|---|---|
+| `status` | Configured model, server state, ledger call count |
+| `start` / `stop` / `restart` | Manage the mlx model server (`stop` frees ~8 GB RAM) |
+| `pull <model>` | Download a model from HuggingFace |
+| `models` | List locally cached models, marking the configured one |
+| `use <model>` | Switch models (persists to `config.json`; restarts if running) |
+| `ask "<prompt>"` | One-off generation, for testing (`--max-tokens N`) |
+| `report` | Token/cost savings report (same data as the `savings_report` MCP tool) |
+| `logs [-f]` | Show (or follow) the mlx server log |
+
 ## Tools
 
 - **`summarize`** — summarize / answer focused questions about large files,
@@ -37,11 +66,7 @@ Two equivalent ways:
 
 1. **Ask Claude** — e.g. *"how much has the local model saved me?"* Claude
    calls the `savings_report` MCP tool.
-2. **From the shell:**
-
-   ```sh
-   ~/dev/claude-local-llm/.venv/bin/python ~/dev/claude-local-llm/server.py --report
-   ```
+2. **From the shell:** `./llm report`
 
 Sample output:
 
@@ -104,26 +129,18 @@ Environment variables (set on the MCP server entry in `~/.claude.json`):
 | `LOCAL_LLM_MODEL` | `mlx-community/Qwen3-14B-4bit` |
 | `LOCAL_LLM_PORT`  | `8734`                         |
 
-## Operations
+## Operations without the CLI
+
+Everything the CLI does maps to plain commands if you need them:
 
 ```sh
-# status
-curl -s http://127.0.0.1:8734/v1/models
-
-# stop the model server (frees ~8 GB RAM; restarts on next tool call)
-pkill -f mlx_lm.server
-
-# logs
-tail -f mlx-server.log
-
-# try a smaller/faster model
-claude mcp remove --scope user local-llm
-LOCAL_LLM_MODEL=mlx-community/Qwen3-8B-4bit  # via --env on claude mcp add
+curl -s http://127.0.0.1:8734/v1/models        # status
+pkill -f mlx_lm.server                          # stop
+tail -f mlx-server.log                          # logs
+.venv/bin/python server.py --report             # savings report
 ```
 
-Re-register after moving this directory:
-
-```sh
-claude mcp add --scope user local-llm -- \
-  ~/dev/claude-local-llm/.venv/bin/python ~/dev/claude-local-llm/server.py
-```
+Model/port precedence is `LOCAL_LLM_MODEL`/`LOCAL_LLM_PORT` env vars (set on
+the MCP entry in `~/.claude.json`) > `config.json` (written by `llm use`) >
+built-in default. After moving this directory, re-run `./install.sh` to
+re-register the MCP server with the new paths.
