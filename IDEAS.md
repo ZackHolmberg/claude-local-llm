@@ -58,11 +58,13 @@ or MinionS-style chunking. Our differentiators are measurement + enforcement.
 
 ## Roadmap candidates (rough priority)
 
-1. **Map-reduce summarize with abstention** — replace head/tail truncation:
-   chunk big inputs (~6-8K chars), run the focus question per chunk with an
-   explicit "reply NOT_RELEVANT if the chunk doesn't bear on the question"
-   escape, drop abstentions, then a final local reduce pass over survivors.
-   Fixes our biggest quality gap on exactly the files the hook deflects.
+1. ~~**Map-reduce summarize with abstention**~~ — **DONE (2026-07-17).**
+   Implementation note learned the hard way: the map step must ask for
+   *evidence extraction*, not the full task — passing a compound question
+   ("what errors, in what order, what causal chain?") to individual chunks
+   caused every chunk to abstain, since no single chunk can answer order or
+   causality. Extract-per-chunk, answer-in-reduce fixed it (this is the
+   paper's "single-step instructions" lesson, which we initially violated).
 2. **`edit` tool (architect/editor)** — `edit(instruction, input_file,
    output_file)`: Claude specs the change in prose, Qwen emits the full
    edited file, Claude spot-checks with `git diff`. Targets bulk mechanical

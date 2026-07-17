@@ -54,6 +54,11 @@ CLAUDE_PRICING = {
 # Qwen3-14B supports 32k tokens of context; leave headroom for the
 # instruction and the response.
 MAX_INPUT_CHARS = 80_000
+# Small models degrade on long contexts (MinionS, arXiv:2502.15964), so
+# summarize switches to chunked map-reduce with abstention above this size.
+MAP_REDUCE_THRESHOLD = 12_000
+CHUNK_CHARS = 7_000
+ABSTAIN = "NOT_RELEVANT"
 GENERATION_TIMEOUT_S = 600
 STARTUP_TIMEOUT_S = 240
 
@@ -299,7 +304,10 @@ def summarize(
         if focus
         else "Summarize the content below: purpose, structure, and notable details."
     )
-    result, usage = _generate(f"{task}\n\n{gathered}", max_tokens)
+    if len(gathered) > MAP_REDUCE_THRESHOLD:
+        result, usage = _map_reduce(task, gathered, max_tokens)
+    else:
+        result, usage = _generate(f"{task}\n\n{gathered}", max_tokens)
     _log_usage(
         "summarize",
         usage,
@@ -308,6 +316,68 @@ def summarize(
         returned_chars=len(result),
     )
     return result
+
+
+def _chunk(text: str) -> list[str]:
+    """Split on line boundaries into ~CHUNK_CHARS pieces."""
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    for line in text.splitlines(keepends=True):
+        if size + len(line) > CHUNK_CHARS and current:
+            chunks.append("".join(current))
+            current, size = [], 0
+        current.append(line)
+        size += len(line)
+    if current:
+        chunks.append("".join(current))
+    return chunks
+
+
+def _acc(total: dict, usage: dict) -> None:
+    for key in ("prompt_tokens", "completion_tokens"):
+        total[key] = total.get(key, 0) + usage.get(key, 0)
+
+
+def _map_reduce(task: str, gathered: str, max_tokens: int) -> tuple[str, dict]:
+    """MinionS-style summarize: single-step question per small chunk, with
+    per-chunk abstention, then a local reduce pass over the survivors."""
+    chunks = _chunk(gathered)
+    total: dict = {}
+    answers: list[str] = []
+    for i, chunk in enumerate(chunks, 1):
+        # Map = single-step evidence extraction, not the full task: a chunk
+        # alone often can't answer a compound question, and asking it to
+        # causes mass abstention. The reduce step answers the actual task.
+        prompt = (
+            f"You are seeing excerpt {i} of {len(chunks)} of a larger input. "
+            f"Extract every fact, quote, or detail from THIS excerpt that is "
+            f"relevant to the task below, as brief bullet points. Do not try "
+            f"to answer the task itself - other excerpts exist. Only if "
+            f"nothing in this excerpt relates to the task at all, reply "
+            f"exactly {ABSTAIN}.\n\nTask: {task}\n\n{chunk}"
+        )
+        text, usage = _generate(prompt, max_tokens=min(max_tokens, 512))
+        _acc(total, usage)
+        if ABSTAIN in text and len(text) < 40:
+            continue
+        answers.append(f"[excerpt {i}] {text}")
+    if not answers:
+        return (
+            "No relevant content found for this task in the provided input.",
+            total,
+        )
+    if len(answers) == 1:
+        return answers[0].split("] ", 1)[1], total
+    combined = "\n\n".join(answers)[: MAX_INPUT_CHARS // 2]
+    text, usage = _generate(
+        f"Below is evidence extracted from consecutive excerpts of one "
+        f"large input. Using only this evidence, give a single coherent, "
+        f"non-redundant answer to this task: {task}\n\n{combined}",
+        max_tokens,
+    )
+    _acc(total, usage)
+    return text, total
 
 
 def _build_report() -> str:

@@ -52,6 +52,13 @@ Re-running `install.sh` is safe (idempotent).
 - **`summarize`** — summarize / answer focused questions about large files,
   logs, diffs, docs, or **web pages** (pass http(s) URLs alongside paths).
   Used instead of Read for big files and instead of WebFetch for long pages.
+  Inputs over ~12K chars are processed MinionS-style
+  ([arXiv:2502.15964](https://arxiv.org/abs/2502.15964)): split into ~7K-char
+  chunks, evidence extracted per chunk (with per-chunk abstention on
+  irrelevant chunks), then a local reduce pass answers the actual question —
+  small models degrade badly when handed one huge context, so this recovers
+  near-frontier quality on big inputs. Expect ~1 min per 15K chars of input;
+  very large files take a few minutes.
 - **`delegate`** — general mechanical generation/transformation: boilerplate,
   fixtures, mock data, format conversion, docstrings. With `output_file`,
   bulk output goes straight to disk.
