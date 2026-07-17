@@ -4,6 +4,10 @@ Offloads mechanical, non-reasoning tasks from Claude Code to a local Qwen
 model running on Apple Silicon via [mlx-lm](https://github.com/ml-explore/mlx-lm),
 to cut Claude token usage.
 
+**New here?** [ARTICLE.md](ARTICLE.md) is the story — the problem, the
+design intuitions, the research this borrows from (MinionS, aider), and
+measured A/B results. [IDEAS.md](IDEAS.md) is the research log and roadmap.
+
 ## How it works
 
 ```
