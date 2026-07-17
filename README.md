@@ -55,6 +55,27 @@ Re-running `install.sh` is safe (idempotent).
   fixtures, mock data, format conversion, docstrings. With `output_file`,
   bulk output goes straight to disk.
 
+## Large-read guard (hook)
+
+Steering via CLAUDE.md is advisory — Claude doesn't always remember to
+delegate. `hooks/read_guard.py` makes the clear-cut case deterministic: a
+`PreToolUse` hook (registered in `~/.claude/settings.json` by `install.sh`)
+intercepts Claude's `Read` calls and **blocks** full reads of large text
+files with a message steering Claude to `summarize` instead.
+
+Rules:
+
+- Blocks when a file exceeds **400 lines** or **64 KB** (override with
+  `LOCAL_LLM_HOOK_MAX_LINES` / `LOCAL_LLM_HOOK_MAX_BYTES` env vars).
+- **Ranged Reads (offset/limit) always pass** — the escape hatch when Claude
+  needs exact contents, e.g. before an Edit.
+- Images, PDFs, and notebooks are exempt (Read handles those natively).
+- Fails open: malformed input or unreadable files never block.
+
+Judgment stays with Claude for everything fuzzy; the hook only enforces the
+unambiguous case. Disable it by removing the `PreToolUse` entry from
+`~/.claude/settings.json` (or via the `/hooks` menu in Claude Code).
+
 ## Usage tracking & savings report
 
 Every `delegate`/`summarize` call appends one line to `usage.jsonl` (in this

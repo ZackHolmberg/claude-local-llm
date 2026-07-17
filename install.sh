@@ -35,6 +35,31 @@ else
   echo "  claude mcp add --scope user local-llm -- $PWD/.venv/bin/python $PWD/server.py"
 fi
 
+# 4. Register the large-read-guard hook in user settings (idempotent)
+.venv/bin/python - "$PWD" <<'PY'
+import json, sys
+from pathlib import Path
+
+project = sys.argv[1]
+settings_path = Path.home() / ".claude" / "settings.json"
+settings = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+entry = {
+    "matcher": "Read",
+    "hooks": [{
+        "type": "command",
+        "command": f"{project}/.venv/bin/python {project}/hooks/read_guard.py",
+        "timeout": 10,
+        "statusMessage": "Checking file size for local-llm delegation",
+    }],
+}
+pre = settings.setdefault("hooks", {}).setdefault("PreToolUse", [])
+pre[:] = [e for e in pre if "read_guard.py" not in json.dumps(e)]
+pre.append(entry)
+settings_path.parent.mkdir(parents=True, exist_ok=True)
+settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+print(f"Registered large-read-guard hook in {settings_path}")
+PY
+
 echo
 echo "Done. Next steps:"
 echo "  ./llm pull mlx-community/Qwen3-14B-4bit   # download a model (~8 GB)"
