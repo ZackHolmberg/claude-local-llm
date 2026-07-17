@@ -180,6 +180,20 @@ def _est_tokens(chars: int) -> int:
     return chars // 4
 
 
+ACTIVE_MARKER = PROJECT_DIR / ".active"
+
+
+def _mark_active(tool: str) -> None:
+    try:
+        ACTIVE_MARKER.write_text(json.dumps({"tool": tool, "started": time.time()}))
+    except OSError:
+        pass
+
+
+def _clear_active() -> None:
+    ACTIVE_MARKER.unlink(missing_ok=True)
+
+
 def _log_usage(
     tool: str,
     usage: dict,
@@ -219,6 +233,14 @@ def _log_usage(
 
 
 def _generate(prompt: str, max_tokens: int, temperature: float = 0.2) -> tuple[str, dict]:
+    _mark_active("local model")
+    try:
+        return _generate_inner(prompt, max_tokens, temperature)
+    finally:
+        _clear_active()
+
+
+def _generate_inner(prompt: str, max_tokens: int, temperature: float) -> tuple[str, dict]:
     _ensure_server()
     resp = httpx.post(
         f"{BASE_URL}/v1/chat/completions",

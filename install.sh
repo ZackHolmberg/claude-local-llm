@@ -55,9 +55,16 @@ entry = {
 pre = settings.setdefault("hooks", {}).setdefault("PreToolUse", [])
 pre[:] = [e for e in pre if "read_guard.py" not in json.dumps(e)]
 pre.append(entry)
+# Status line: register only if the user doesn't already have one.
+if "statusLine" not in settings:
+    settings["statusLine"] = {
+        "type": "command",
+        "command": f"{project}/.venv/bin/python {project}/statusline.py",
+        "refreshInterval": 30,
+    }
 settings_path.parent.mkdir(parents=True, exist_ok=True)
 settings_path.write_text(json.dumps(settings, indent=2) + "\n")
-print(f"Registered large-read-guard hook in {settings_path}")
+print(f"Registered large-read-guard hook (and status line) in {settings_path}")
 PY
 
 echo

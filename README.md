@@ -104,6 +104,24 @@ Judgment stays with Claude for everything fuzzy; the hook only enforces the
 unambiguous case. Disable it by removing the `PreToolUse` entry from
 `~/.claude/settings.json` (or via the `/hooks` menu in Claude Code).
 
+## Status line (live visibility)
+
+`statusline.py` renders a Claude Code status line so delegation is visible
+without digging through the transcript:
+
+```
+Fable 5 | ⚡ local model working            <- a delegated call is running now
+Fable 5 | 🦙 3 delegated · ~12,400 tok saved today
+Fable 5 | 🦙 local-llm ready               <- no calls yet today
+```
+
+The server writes a `.active` marker for the duration of every local
+generation; the status line (refreshed every 30s) picks it up, and shows
+today's call count / net tokens saved / failures from the ledger otherwise.
+`install.sh` registers it only if you don't already have a status line.
+Delegated calls also appear inline in the transcript as
+`mcp__local-llm__*` tool uses.
+
 ## Usage tracking & savings report
 
 Every `delegate`/`summarize` call appends one line to `usage.jsonl` (in this
