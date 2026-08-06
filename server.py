@@ -56,8 +56,18 @@ CLAUDE_PRICING = {
 MAX_INPUT_CHARS = 80_000
 # Small models degrade on long contexts (MinionS, arXiv:2502.15964), so
 # summarize switches to chunked map-reduce with abstention above this size.
-MAP_REDUCE_THRESHOLD = 12_000
-CHUNK_CHARS = 7_000
+#
+# Measured on Qwen3-14B-4bit with a 40k-char source file and a focus question
+# with known ground truth (12 CLI flags to recover):
+#     single-pass       70.2s   12/12 flags
+#     map-reduce @24k   74.5s   12/12 flags
+#     map-reduce @7k    89.0s   12/12 flags
+# No accuracy cliff at 40k, and map-reduce costs ~20% more wall-clock there
+# (each chunk re-pays prompt-processing overhead), so the threshold sits above
+# it. Beyond ~40k the MinionS degradation risk is real and untested, so keep
+# chunking -- but with chunks large enough not to shred the input.
+MAP_REDUCE_THRESHOLD = 40_000
+CHUNK_CHARS = 20_000
 ABSTAIN = "NOT_RELEVANT"
 GENERATION_TIMEOUT_S = 600
 STARTUP_TIMEOUT_S = 240
@@ -258,7 +268,22 @@ def _generate_inner(prompt: str, max_tokens: int, temperature: float) -> tuple[s
     resp.raise_for_status()
     data = resp.json()
     choice = data["choices"][0]
-    content = re.sub(r"<think>.*?</think>", "", choice["message"]["content"], flags=re.DOTALL)
+    # mlx-lm >=0.31 returns chain-of-thought in a separate `reasoning` field and
+    # omits `content` entirely when the token budget runs out mid-thought. The
+    # /no_think system prompt normally prevents that, but a small max_tokens can
+    # still trip it, and a bare ["content"] would raise KeyError instead of
+    # reporting a usable error.
+    message = choice.get("message") or {}
+    raw = message.get("content")
+    if not raw:
+        reasoning = (message.get("reasoning") or "").strip()
+        if reasoning:
+            raise RuntimeError(
+                f"local model produced only reasoning, no answer "
+                f"(finish_reason={choice.get('finish_reason')}). Raise max_tokens."
+            )
+        raw = ""
+    content = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
     usage = data.get("usage", {})
     usage["finish_reason"] = choice.get("finish_reason")
     return content.strip(), usage

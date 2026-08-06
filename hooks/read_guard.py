@@ -16,6 +16,7 @@ when exact contents matter (e.g. before an Edit).
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -78,6 +79,34 @@ def log_deflection(path: Path, tier: str, size: int, lines: int | None) -> None:
         pass
 
 
+RANGE_STATE = Path.home() / ".claude" / ".local-llm-ranged-reads.json"
+RANGE_WINDOW_S = 1800
+# Nudge on exactly the Nth ranged read of the same oversized file. Re-issuing
+# the read bumps the count past N and passes, so this is a one-shot nudge and
+# never a wall -- ranged reads stay the legitimate escape hatch before an Edit.
+RANGE_NUDGE_AT = 2
+
+
+def note_ranged_read(path: Path) -> int:
+    """Count ranged reads of one file inside the window. 0 means 'never nudge'."""
+    now = time.time()
+    try:
+        state = json.loads(RANGE_STATE.read_text()) if RANGE_STATE.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        state = {}
+    state = {k: v for k, v in state.items()
+             if isinstance(v, dict) and now - v.get("last", 0) < RANGE_WINDOW_S}
+    entry = state.setdefault(str(path), {"n": 0, "last": now})
+    entry["n"] += 1
+    entry["last"] = now
+    try:
+        RANGE_STATE.parent.mkdir(parents=True, exist_ok=True)
+        RANGE_STATE.write_text(json.dumps(state))
+    except OSError:
+        return 0
+    return entry["n"]
+
+
 def deny(reason: str) -> None:
     print(
         json.dumps(
@@ -100,9 +129,8 @@ def main() -> None:
     file_path = tool_input.get("file_path")
     if not file_path:
         return
-    # Explicit ranged reads are the escape hatch - always allow.
-    if tool_input.get("offset") is not None or tool_input.get("limit") is not None:
-        return
+    ranged = (tool_input.get("offset") is not None
+              or tool_input.get("limit") is not None)
     path = Path(file_path)
     if path.suffix.lower() in SKIP_SUFFIXES or not path.is_file():
         return
@@ -126,6 +154,27 @@ def main() -> None:
         detail = f"{lines} lines"
     else:
         detail = f"{size // 1024} KB"
+
+    # The file IS oversized. A ranged read is allowed, but repeatedly ranging
+    # over the same big file is just a whole-file read in disguise -- which is
+    # how this guard gets bypassed in practice. Nudge once, then get out of
+    # the way.
+    if ranged:
+        n = note_ranged_read(path)
+        if n == RANGE_NUDGE_AT:
+            log_deflection(path, tier, size, lines)
+            deny(
+                f"large-read-guard: this is ranged read #{n} of {path} "
+                f"({detail}, over the {max_lines}-line/{max_bytes // 1024} KB "
+                f"limit for {tier} files) in the last "
+                f"{RANGE_WINDOW_S // 60} minutes. Walking a big file in slices "
+                f"costs the same context as reading it whole. If you need the "
+                f"gist, prefer mcp__local-llm__summarize with "
+                f'input_files=["{path}"] and a focus question. If you genuinely '
+                f"need exact contents (e.g. before an Edit), just issue this "
+                f"same ranged Read again - it will pass."
+            )
+        return
 
     log_deflection(path, tier, size, lines)
     deny(
