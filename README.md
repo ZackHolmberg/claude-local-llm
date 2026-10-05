@@ -11,7 +11,7 @@ measured A/B results. [IDEAS.md](IDEAS.md) is the research log and roadmap.
 ## How it works
 
 ```
-Claude Code ──(MCP stdio)──> server.py ──(HTTP :8734)──> mlx_lm.server (Qwen3-14B-4bit)
+Claude Code ──(MCP stdio)──> server.py ──(HTTP :8734)──> mlx_lm.server (Qwen3.5-9B-4bit)
 ```
 
 - `server.py` is registered as the `local-llm` MCP server (user scope, all
@@ -28,7 +28,7 @@ Requires Apple Silicon. Clone, then:
 
 ```sh
 ./install.sh                               # uv + venv + deps + Claude Code MCP registration
-./llm pull mlx-community/Qwen3-14B-4bit    # download a model (~8 GB; needs ~24 GB RAM)
+./llm pull mlx-community/Qwen3.5-9B-4bit   # download a model (~6 GB; see bench/ for how it was chosen)
 ./llm start                                # optional - the server auto-starts on first tool call
 ./llm status                               # verify
 ```
@@ -212,7 +212,7 @@ Environment variables (set on the MCP server entry in `~/.claude.json`):
 
 | Variable          | Default                        |
 |-------------------|--------------------------------|
-| `LOCAL_LLM_MODEL` | `mlx-community/Qwen3-14B-4bit` |
+| `LOCAL_LLM_MODEL` | `mlx-community/Qwen3.5-9B-4bit` |
 | `LOCAL_LLM_PORT`  | `8734`                         |
 
 ## Operations without the CLI

@@ -69,6 +69,6 @@ PY
 
 echo
 echo "Done. Next steps:"
-echo "  ./llm pull mlx-community/Qwen3-14B-4bit   # download a model (~8 GB)"
+echo "  ./llm pull mlx-community/Qwen3.5-9B-4bit   # download a model (~6 GB)"
 echo "  ./llm start                                # load it (optional - auto-starts on first use)"
 echo "  ./llm status                               # verify"

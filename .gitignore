@@ -4,3 +4,4 @@ mlx-server.log
 usage.jsonl
 config.json
 .active
+bench/results/server-*.log

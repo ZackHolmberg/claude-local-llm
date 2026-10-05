@@ -1,0 +1,60 @@
+
+=== qwen3-14b-nothink (mlx-community/Qwen3-14B-4bit)
+  flags_40k  rep1  71.37s  46 tok (1/s incl. prefill)  reasoning=2ch  finish=stop  -> 12/12 flags
+  flags_40k  rep2  70.87s  46 tok (1/s incl. prefill)  reasoning=2ch  finish=stop  -> 12/12 flags
+  flags_80k  rep1  157.64s  46 tok (0/s incl. prefill)  reasoning=2ch  finish=stop  -> 12/12 flags
+  flags_80k  rep2  158.48s  46 tok (0/s incl. prefill)  reasoning=2ch  finish=stop  -> 12/12 flags
+  csv_json   rep1  145.8s  3395 tok (23/s incl. prefill)  reasoning=2ch  finish=stop  -> 60/60 rows
+  csv_json   rep2  145.17s  3395 tok (23/s incl. prefill)  reasoning=2ch  finish=stop  -> 60/60 rows
+  rename     rep1  95.91s  2084 tok (22/s incl. prefill)  reasoning=2ch  finish=stop  -> mismatch (similarity 0.999)
+  rename     rep2  95.99s  2084 tok (22/s incl. prefill)  reasoning=2ch  finish=stop  -> mismatch (similarity 0.999)
+
+=== qwen3.5-9b-nothink (mlx-community/Qwen3.5-9B-4bit)
+  flags_40k  rep1  36.09s  42 tok (1/s incl. prefill)  reasoning=0ch  finish=stop  -> 12/12 flags
+  flags_40k  rep2  36.28s  42 tok (1/s incl. prefill)  reasoning=0ch  finish=stop  -> 12/12 flags
+  flags_80k  rep1  73.15s  42 tok (1/s incl. prefill)  reasoning=0ch  finish=stop  -> 12/12 flags
+  flags_80k  rep2  72.97s  42 tok (1/s incl. prefill)  reasoning=0ch  finish=stop  -> 12/12 flags
+  csv_json   rep1  53.3s  2131 tok (40/s incl. prefill)  reasoning=0ch  finish=stop  -> 60/60 rows
+  csv_json   rep2  52.56s  2131 tok (41/s incl. prefill)  reasoning=0ch  finish=stop  -> 60/60 rows
+  rename     rep1  59.48s  2261 tok (38/s incl. prefill)  reasoning=0ch  finish=stop  -> exact
+  rename     rep2  59.0s  2261 tok (38/s incl. prefill)  reasoning=0ch  finish=stop  -> exact
+
+=== gemma4-26b-nothink (mlx-community/gemma-4-26b-a4b-it-4bit)
+  flags_40k  rep1  24.05s  47 tok (2/s incl. prefill)  reasoning=0ch  finish=stop  -> 12/12 flags
+  flags_40k  rep2  24.67s  47 tok (2/s incl. prefill)  reasoning=0ch  finish=stop  -> 12/12 flags
+  flags_80k  rep1  50.75s  23 tok (0/s incl. prefill)  reasoning=0ch  finish=stop  -> 6/12 flags
+  flags_80k  rep2  48.57s  11 tok (0/s incl. prefill)  reasoning=0ch  finish=stop  -> 3/12 flags
+  csv_json   rep1  70.05s  3771 tok (54/s incl. prefill)  reasoning=0ch  finish=stop  -> 60/60 rows
+  csv_json   rep2  69.41s  3771 tok (54/s incl. prefill)  reasoning=0ch  finish=stop  -> 60/60 rows
+  rename     rep1  47.97s  2441 tok (51/s incl. prefill)  reasoning=0ch  finish=stop  -> mismatch (similarity 0.999)
+  rename     rep2  49.31s  2441 tok (50/s incl. prefill)  reasoning=0ch  finish=stop  -> mismatch (similarity 0.999)
+
+=== gemma4-26b-think (mlx-community/gemma-4-26b-a4b-it-4bit)
+  flags_40k  rep1  56.36s  1713 tok (30/s incl. prefill)  reasoning=5038ch  finish=stop  -> 12/12 flags
+  flags_40k  rep2  59.51s  1730 tok (29/s incl. prefill)  reasoning=5268ch  finish=stop  -> 12/12 flags
+  flags_80k  rep1  59.75s  40 tok (1/s incl. prefill)  reasoning=1ch  finish=stop  -> 9/12 flags
+  flags_80k  rep2  50.38s  40 tok (1/s incl. prefill)  reasoning=1ch  finish=stop  -> 9/12 flags
+  csv_json   rep1  152.72s  7929 tok (52/s incl. prefill)  reasoning=8611ch  finish=stop  -> invalid JSON: Expecting value: line 5 column 9 (char 289)
+  csv_json   rep2  317.99s  16384 tok (52/s incl. prefill)  reasoning=29203ch  finish=length  -> invalid JSON: Expecting value: line 1 column 1 (char 0)
+  rename     rep1  327.82s  16384 tok (50/s incl. prefill)  reasoning=45163ch  finish=length  -> mismatch (similarity 0.000)
+  rename     rep2  318.18s  16384 tok (51/s incl. prefill)  reasoning=46254ch  finish=length  -> mismatch (similarity 0.000)
+
+Results: bench/results/run-20261004-170405.jsonl
+
+config                task        median s  accuracy  compl tok
+qwen3-14b-nothink     csv_json       145.5      100%       3395
+qwen3-14b-nothink     flags_40k       71.1      100%         46
+qwen3-14b-nothink     flags_80k      158.1      100%         46
+qwen3-14b-nothink     rename          95.9        0%       2084
+qwen3.5-9b-nothink    csv_json        52.9      100%       2131
+qwen3.5-9b-nothink    flags_40k       36.2      100%         42
+qwen3.5-9b-nothink    flags_80k       73.1      100%         42
+qwen3.5-9b-nothink    rename          59.2      100%       2261
+gemma4-26b-nothink    csv_json        69.7      100%       3771
+gemma4-26b-nothink    flags_40k       24.4      100%         47
+gemma4-26b-nothink    flags_80k       49.7       38%         17
+gemma4-26b-nothink    rename          48.6        0%       2441
+gemma4-26b-think      csv_json       235.4        0%      12156
+gemma4-26b-think      flags_40k       57.9      100%       1721
+gemma4-26b-think      flags_80k       55.1       75%         40
+gemma4-26b-think      rename         323.0        0%      16384

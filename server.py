@@ -1,4 +1,4 @@
-"""MCP server that offloads mechanical tasks from Claude to a local Qwen model via mlx-lm.
+"""MCP server that offloads mechanical tasks from Claude to a local model via mlx-lm.
 
 Exposes delegation tools to Claude Code. On first use it auto-starts
 `mlx_lm.server` (OpenAI-compatible, shared across sessions) if it isn't
@@ -37,7 +37,7 @@ def _config() -> dict:
 
 # Precedence: env var > config.json (written by `llm use`) > default.
 MODEL = os.environ.get("LOCAL_LLM_MODEL") or _config().get(
-    "model", "mlx-community/Qwen3-14B-4bit"
+    "model", "mlx-community/Qwen3.5-9B-4bit"
 )
 PORT = int(os.environ.get("LOCAL_LLM_PORT") or _config().get("port", 8734))
 BASE_URL = f"http://127.0.0.1:{PORT}"
@@ -51,29 +51,39 @@ CLAUDE_PRICING = {
     "claude-fable-5": (10.00, 50.00),
 }
 
-# Qwen3-14B supports 32k tokens of context; leave headroom for the
-# instruction and the response.
-MAX_INPUT_CHARS = 80_000
-# Small models degrade on long contexts (MinionS, arXiv:2502.15964), so
-# summarize switches to chunked map-reduce with abstention above this size.
+# Qwen3.5-9B has 256k tokens of context; the cap is set by what has been
+# measured, not by the window. Small models can degrade on long contexts
+# (MinionS, arXiv:2502.15964), so summarize switches to chunked map-reduce
+# with abstention above MAP_REDUCE_THRESHOLD.
 #
-# Measured on Qwen3-14B-4bit with a 40k-char source file and a focus question
-# with known ground truth (12 CLI flags to recover):
-#     single-pass       70.2s   12/12 flags
-#     map-reduce @24k   74.5s   12/12 flags
-#     map-reduce @7k    89.0s   12/12 flags
-# No accuracy cliff at 40k, and map-reduce costs ~20% more wall-clock there
-# (each chunk re-pays prompt-processing overhead), so the threshold sits above
-# it. Beyond ~40k the MinionS degradation risk is real and untested, so keep
-# chunking -- but with chunks large enough not to shred the input.
-MAP_REDUCE_THRESHOLD = 40_000
+# Measured single-pass with a focus question with known ground truth (12 CLI
+# flags to recover), via bench/bench.py:
+#     Qwen3-14B-4bit   40k chars    70.2s   12/12
+#     Qwen3-14B-4bit   80k chars   158.1s   12/12
+#     Qwen3.5-9B-4bit  40k chars    36.2s   12/12
+#     Qwen3.5-9B-4bit  80k chars    73.1s   12/12
+#     Qwen3.5-9B-4bit 160k chars   160.6s   12/12
+# Earlier Qwen3-14B runs at 40k found map-reduce ~20% slower than single-pass
+# with no accuracy gain (each chunk re-pays prompt processing), so single-pass
+# runs up to the largest size verified. Beyond that, keep chunking.
+MAX_INPUT_CHARS = 160_000
+MAP_REDUCE_THRESHOLD = 160_000
 CHUNK_CHARS = 20_000
 ABSTAIN = "NOT_RELEVANT"
 GENERATION_TIMEOUT_S = 600
 STARTUP_TIMEOUT_S = 240
 
+# Qwen3.5 dropped Qwen3's "/no_think" soft switch; thinking is disabled via
+# the chat template instead (see _generate_inner). With thinking on, models
+# in bench/bench.py burned the whole token budget on mechanical tasks.
+CHAT_TEMPLATE_KWARGS = {"enable_thinking": False}
+# Uncapped, mlx_lm.server's prompt cache grew to 7.4 GB beside the model and
+# pushed a 24 GB Mac into swap, slowing prompt processing ~10x. Delegated
+# inputs rarely repeat, so a small cap loses almost nothing.
+PROMPT_CACHE_BYTES = 2 * 1024**3
+
 SYSTEM_PROMPT = (
-    "/no_think You are a precise assistant handling a delegated subtask. "
+    "You are a precise assistant handling a delegated subtask. "
     "Follow the instruction exactly. Output only the requested result - no "
     "preamble, no commentary, no markdown fences unless asked for them."
 )
@@ -101,7 +111,8 @@ def _ensure_server() -> None:
         return
     with open(SERVER_LOG, "ab") as log:
         subprocess.Popen(
-            [str(VENV_BIN / "mlx_lm.server"), "--model", MODEL, "--port", str(PORT)],
+            [str(VENV_BIN / "mlx_lm.server"), "--model", MODEL, "--port", str(PORT),
+             "--prompt-cache-bytes", str(PROMPT_CACHE_BYTES)],
             stdout=log,
             stderr=log,
             start_new_session=True,
@@ -262,6 +273,7 @@ def _generate_inner(prompt: str, max_tokens: int, temperature: float) -> tuple[s
             ],
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "chat_template_kwargs": CHAT_TEMPLATE_KWARGS,
         },
         timeout=GENERATION_TIMEOUT_S,
     )
@@ -269,8 +281,8 @@ def _generate_inner(prompt: str, max_tokens: int, temperature: float) -> tuple[s
     data = resp.json()
     choice = data["choices"][0]
     # mlx-lm >=0.31 returns chain-of-thought in a separate `reasoning` field and
-    # omits `content` entirely when the token budget runs out mid-thought. The
-    # /no_think system prompt normally prevents that, but a small max_tokens can
+    # omits `content` entirely when the token budget runs out mid-thought.
+    # enable_thinking=False normally prevents that, but a small max_tokens can
     # still trip it, and a bare ["content"] would raise KeyError instead of
     # reporting a usable error.
     message = choice.get("message") or {}
