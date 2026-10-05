@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local LLM Usage</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11,11,11,0.10);
+  --wash: rgba(11,11,11,0.04);
+  --series-1: #2a78d6;  /* delegate */
+  --series-2: #eb6834;  /* summarize */
+  --series-3: #1baf7a;  /* edit */
+  --seq-track: #cde2fb;
+  --seq-fill: #2a78d6;
+  --good: #0ca30c;
+  --critical: #d03b3b;
+  --good-text: #006300;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255,255,255,0.10);
+    --wash: rgba(255,255,255,0.05);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --seq-track: #0d366b;
+    --seq-fill: #6da7ec;
+    --good-text: #0ca30c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface-1: #1a1a19;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255,255,255,0.10);
+  --wash: rgba(255,255,255,0.05);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --seq-track: #0d366b;
+  --seq-fill: #6da7ec;
+  --good-text: #0ca30c;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; }
+h2 { font-size: 14px; font-weight: 600; margin: 0; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 2px 0 0; }
+.muted { color: var(--text-muted); }
+
+.status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary);
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+.seg { display: inline-flex; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+.seg button { border: 0; background: none; color: var(--text-secondary); font: inherit; font-size: 13px;
+  padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+.seg button:hover { background: var(--wash); }
+.seg button[aria-pressed="true"] { background: var(--wash); color: var(--text-primary); font-weight: 600; }
+select { font: inherit; font-size: 13px; color: var(--text-primary); background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; }
+.updated { margin-left: auto; font-size: 12px; color: var(--text-muted); }
+
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 12px; margin-bottom: 12px; }
+@media (min-width: 900px) { .kpis { grid-template-columns: 1.4fr repeat(5, 1fr); } }
+@media (max-width: 899px) { .kpis .hero { grid-column: 1 / -1; } }
+.tile .label { color: var(--text-secondary); font-size: 13px; }
+.tile .value { font-size: 26px; font-weight: 600; margin-top: 4px; }
+.tile .note { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+.hero .value { font-size: 48px; line-height: 1.1; }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 12px; margin-bottom: 12px; }
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart svg text { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.caption { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--text-secondary); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.sw.dotkey { border-radius: 50%; }
+
+.linkbtn { border: 0; background: none; color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; padding: 0; }
+
+.meter { height: 8px; border-radius: 4px; background: var(--seq-track); overflow: hidden; margin: 10px 0 6px; }
+.meter > div { height: 100%; background: var(--seq-fill); border-radius: 4px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--text-muted); font-weight: 500; font-size: 12px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll { overflow-x: auto; }
+.tag { display: inline-flex; align-items: center; gap: 6px; }
+.ok { color: var(--good-text); }
+.err { color: var(--critical); }
+.src { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+
+#tip { position: fixed; pointer-events: none; z-index: 10; display: none; background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12); max-width: 280px; }
+#tip .t-head { color: var(--text-muted); margin-bottom: 4px; }
+#tip .t-row { display: flex; align-items: center; gap: 8px; }
+#tip .t-row strong { font-variant-numeric: tabular-nums; }
+#tip .t-key { width: 12px; height: 2px; border-radius: 1px; flex: none; }
+#tip .t-lbl { color: var(--text-secondary); }
+
+.empty { color: var(--text-muted); padding: 24px 0; text-align: center; }
+.stale { opacity: 0.6; transition: opacity .2s; }
+</style>
+</head>
+<body>
+<main id="app">
+  <header>
+    <div>
+      <h1>Local LLM usage</h1>
+      <p class="sub">Work offloaded from Claude to the local model, from usage.jsonl</p>
+    </div>
+    <div class="status" id="status"><span class="dot" style="background:var(--text-muted)"></span>Loading…</div>
+  </header>
+
+  <div class="filters" role="toolbar" aria-label="Filters">
+    <div class="seg" id="range" aria-label="Date range">
+      <button data-v="1">Today</button><button data-v="7">7 days</button><button data-v="30">30 days</button><button data-v="90">90 days</button><button data-v="all">All time</button>
+    </div>
+    <select id="tool" aria-label="Tool">
+      <option value="all">All tools</option><option value="delegate">delegate</option><option value="summarize">summarize</option><option value="edit">edit</option>
+    </select>
+    <select id="price" aria-label="Claude pricing used for savings"></select>
+    <span class="updated" id="updated"></span>
+  </div>
+
+  <section class="kpis" id="kpis"></section>
+
+  <section class="grid2">
+    <div class="card">
+      <div class="card-head"><h2>Calls per day</h2><div class="legend" id="legend-daily"></div></div>
+      <div class="chart" id="chart-daily"></div>
+      <div class="caption"><button class="linkbtn" id="toggle-daily">Show data</button></div>
+      <div class="scroll" id="table-daily" hidden></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Estimated savings, cumulative</h2><span class="muted" id="price-note"></span></div>
+      <div class="chart" id="chart-savings"></div>
+      <div class="caption">Net input tokens saved plus avoided output, priced at the selected Claude rate. Every point is a row in the request log.</div>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <div class="card-head"><h2>Latency vs. input size</h2><div class="legend" id="legend-scatter"></div></div>
+      <div class="chart" id="chart-scatter"></div>
+      <div class="caption" id="scatter-caption"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Models</h2></div>
+      <div class="scroll" id="models"></div>
+      <div style="margin-top:20px">
+        <h2>Read-guard follow-through</h2>
+        <div id="funnel"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Request log</h2><span class="muted" id="log-note"></span></div>
+    <div class="scroll" id="log"></div>
+  </section>
+</main>
+<div id="tip" role="tooltip"></div>
+
+<script>
+"use strict";
+// ?theme=light|dark pins the theme; otherwise it follows the OS setting.
+const themeParam = new URLSearchParams(location.search).get("theme");
+if (themeParam === "light" || themeParam === "dark") document.documentElement.dataset.theme = themeParam;
+const TOOLS = ["delegate", "summarize", "edit"];
+const TOOL_VAR = { delegate: "--series-1", summarize: "--series-2", edit: "--series-3" };
+const DAY = 86400000;
+
+const store = {
+  get(k, d) { try { return localStorage.getItem("llmdash." + k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("llmdash." + k, v); } catch {} },
+};
+const state = { range: store.get("range", "30"), tool: store.get("tool", "all"), price: store.get("price", ""), data: null };
+
+const $ = (id) => document.getElementById(id);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const toolColor = (t) => css(TOOL_VAR[t] || "--text-muted");
+const SVGNS = "http://www.w3.org/2000/svg";
+function el(tag, attrs = {}, parent) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+function h(tag, props = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "text") n.textContent = v;
+    else if (k === "style") n.style.cssText = v;
+    else n.setAttribute(k, v);
+  }
+  for (const c of kids) if (c != null) n.append(c);
+  return n;
+}
+
+// ---------- formatting
+function compact(n) {
+  const a = Math.abs(n);
+  if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M";
+  if (a >= 1e3) return (n / 1e3).toFixed(a >= 1e4 ? 0 : 1) + "K";
+  return Math.round(n).toLocaleString();
+}
+function money(n) {
+  if (n === 0) return "$0";
+  // Pick decimals from the rounded value, so 0.0999 shows as $0.10, not $0.100.
+  const a = Math.abs(Number(n.toFixed(3)));
+  return "$" + (a >= 100 ? n.toFixed(0) : a >= 0.1 ? n.toFixed(2) : n.toFixed(a >= 0.01 ? 3 : 4));
+}
+function secs(ms) { return ms == null ? "–" : ms < 10000 ? (ms / 1000).toFixed(1) + "s" : Math.round(ms / 1000) + "s"; }
+const fmtDay = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+const fmtTime = (d) => d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const shortModel = (m) => (m || "–").split("/").pop();
+const median = (xs) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p;
+  return 10 * p;
+}
+const startOfDay = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+
+// ---------- derived data
+function savingsOf(e, rate) {
+  const net = (e.input_tokens_avoided || 0) - (e.tokens_returned_to_claude || 0);
+  return (net * rate[0] + (e.output_tokens_avoided || 0) * rate[1]) / 1e6;
+}
+function slice() {
+  const { entries } = state.data;
+  const now = Date.now();
+  const from = state.range === "all" ? -Infinity
+    : state.range === "1" ? startOfDay(now) : now - Number(state.range) * DAY;
+  const inRange = entries.filter((e) => Date.parse(e.ts) >= from);
+  const calls = inRange.filter((e) => (e.event || "call") === "call" && (state.tool === "all" || e.tool === state.tool));
+  const deflections = inRange.filter((e) => e.event === "deflection");
+  const first = entries.length ? Date.parse(entries[0].ts) : now;
+  return { calls, deflections, from: Number.isFinite(from) ? from : startOfDay(first), now };
+}
+
+// ---------- tooltip
+const tip = $("tip");
+function showTip(evt, head, rows) {
+  tip.replaceChildren(h("div", { class: "t-head", text: head }));
+  for (const r of rows) {
+    tip.append(h("div", { class: "t-row" },
+      r.color ? h("span", { class: "t-key", style: `background:${r.color}` }) : null,
+      h("strong", { text: r.value }), h("span", { class: "t-lbl", text: r.label })));
+  }
+  tip.style.display = "block";
+  const pad = 14, w = tip.offsetWidth, ht = tip.offsetHeight;
+  let x = evt.clientX + pad, y = evt.clientY + pad;
+  if (x + w > innerWidth - 8) x = evt.clientX - w - pad;
+  if (y + ht > innerHeight - 8) y = evt.clientY - ht - pad;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+
+// ---------- KPIs
+function tile(label, value, note, hero) {
+  return h("div", { class: "card tile" + (hero ? " hero" : "") },
+    h("div", { class: "label", text: label }), h("div", { class: "value", text: value }),
+    note ? h("div", { class: "note", text: note }) : null);
+}
+function renderKpis(s, rate) {
+  const ok = s.calls.filter((e) => !e.error);
+  const failed = s.calls.length - ok.length;
+  const saved = s.calls.reduce((a, e) => a + savingsOf(e, rate), 0);
+  const netTokens = s.calls.reduce((a, e) => a + (e.input_tokens_avoided || 0) - (e.tokens_returned_to_claude || 0) + (e.output_tokens_avoided || 0), 0);
+  const local = s.calls.reduce((a, e) => a + (e.local_prompt_tokens || 0) + (e.local_completion_tokens || 0), 0);
+  const durs = s.calls.map((e) => e.duration_ms).filter((d) => d != null);
+  const waitH = durs.reduce((a, d) => a + d, 0) / 3.6e6;
+  $("kpis").replaceChildren(
+    tile("Estimated Claude spend avoided", money(saved), `at ${state.price} rates`, true),
+    tile("Calls", s.calls.length.toLocaleString(), failed ? `${failed} failed` : "none failed"),
+    tile("Claude tokens saved", compact(netTokens), "net of tokens returned"),
+    tile("Local tokens processed", compact(local), "prompt + completion"),
+    tile("Median latency", secs(median(durs)), durs.length ? `max ${secs(Math.max(...durs))}` : ""),
+    tile("Saved per hour waited", waitH > 0 ? money(saved / waitH) : "–", `${(waitH * 60).toFixed(1)} min waited in total`),
+  );
+}
+
+// ---------- shared chart frame
+const M = { t: 12, r: 12, b: 28, l: 48 };
+function frame(container, height) {
+  container.replaceChildren();
+  const W = Math.max(280, container.clientWidth), H = height;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" }, container);
+  return { svg, W, H, iw: W - M.l - M.r, ih: H - M.t - M.b };
+}
+function yAxis(svg, iw, ih, max, fmt) {
+  const g = el("g", { transform: `translate(${M.l},${M.t})` }, svg);
+  for (let i = 0; i <= 4; i++) {
+    const v = (max / 4) * i, y = ih - (v / max) * ih;
+    el("line", { x1: 0, x2: iw, y1: y, y2: y, stroke: i ? css("--grid") : css("--axis"), "stroke-width": 1 }, g);
+    el("text", { x: -8, y: y + 4, "text-anchor": "end" }, g).textContent = fmt(v);
+  }
+  return g;
+}
+function legend(id, tools, dot) {
+  $(id).replaceChildren(...tools.map((t) => h("span", {},
+    h("span", { class: "sw" + (dot ? " dotkey" : ""), style: `background:${toolColor(t)}` }), t)));
+}
+function emptyChart(container, msg) { container.replaceChildren(h("div", { class: "empty", text: msg })); }
+
+// ---------- calls per day (stacked columns by tool)
+function renderDaily(s) {
+  const box = $("chart-daily");
+  const span = Math.ceil((startOfDay(s.now) - startOfDay(s.from)) / DAY) + 1;
+  const step = span > 120 ? 7 : 1;  // long ranges bucket by week
+  const n = Math.ceil(span / step);
+  const t0 = startOfDay(s.now) - (n * step - 1) * DAY;
+  const buckets = Array.from({ length: n }, (_, i) => ({ t: t0 + i * step * DAY, counts: Object.fromEntries(TOOLS.map((t) => [t, 0])) }));
+  for (const e of s.calls) {
+    const i = Math.floor((startOfDay(Date.parse(e.ts)) - t0) / (step * DAY));
+    if (i >= 0 && i < n && e.tool in buckets[i].counts) buckets[i].counts[e.tool]++;
+  }
+  const shown = TOOLS.filter((t) => buckets.some((b) => b.counts[t]));
+  legend("legend-daily", shown.length ? shown : TOOLS.filter((t) => state.tool === "all" || t === state.tool));
+  renderDailyTable(buckets, shown, step);
+  if (!s.calls.length) return emptyChart(box, "No calls in this range");
+
+  const { svg, iw, ih } = frame(box, 220);
+  // counts: at least 4 so the 5 gridlines land on whole numbers
+  const maxV = Math.max(4, Math.ceil(niceMax(Math.max(...buckets.map((b) => TOOLS.reduce((a, t) => a + b.counts[t], 0)))) / 4) * 4);
+  yAxis(svg, iw, ih, maxV, (v) => v.toLocaleString());
+  const g = el("g", { transform: `translate(${M.l},${M.t})` }, svg);
+  const band = iw / n, bw = Math.min(24, Math.max(2, band * 0.7)), gap = 2, r = Math.min(4, bw / 2);
+  const labelEvery = Math.ceil(n / Math.max(1, Math.floor(iw / 64)));
+  buckets.forEach((b, i) => {
+    const x = i * band + (band - bw) / 2;
+    let y = ih;
+    const segs = TOOLS.filter((t) => b.counts[t]);
+    segs.forEach((t, j) => {
+      const hgt = (b.counts[t] / maxV) * ih;
+      const top = j === segs.length - 1;
+      // segments above the first give up `gap` px at their base: the surface gap
+      const y1 = y - hgt, y2 = y - (j > 0 ? gap : 0);
+      const hh = Math.max(1, y2 - y1);
+      const p = top
+        ? `M${x},${y2} V${y1 + r} Q${x},${y1} ${x + r},${y1} H${x + bw - r} Q${x + bw},${y1} ${x + bw},${y1 + r} V${y2} Z`
+        : `M${x},${y2} V${y2 - hh} H${x + bw} V${y2} Z`;
+      el("path", { d: p, fill: toolColor(t) }, g);
+      y -= hgt;
+    });
+    // hit target: the whole column band, not just painted pixels
+    const hit = el("rect", { x: i * band, y: 0, width: band, height: ih, fill: "transparent", tabindex: 0 }, g);
+    const head = step === 1 ? fmtDay(new Date(b.t)) : `Week of ${fmtDay(new Date(b.t))}`;
+    const rows = () => TOOLS.filter((t) => b.counts[t]).map((t) => ({ color: toolColor(t), value: b.counts[t], label: t }));
+    const show = (ev) => { hit.setAttribute("fill", css("--wash")); showTip(ev, head, rows().length ? rows() : [{ value: 0, label: "calls" }]); };
+    hit.addEventListener("pointermove", show);
+    hit.addEventListener("focus", () => { const bb = hit.getBoundingClientRect(); show({ clientX: bb.right, clientY: bb.top + 20 }); });
+    hit.addEventListener("pointerleave", () => { hit.setAttribute("fill", "transparent"); hideTip(); });
+    hit.addEventListener("blur", () => { hit.setAttribute("fill", "transparent"); hideTip(); });
+    if (i % labelEvery === 0) el("text", { x: i * band + band / 2, y: ih + 18, "text-anchor": "middle" }, g).textContent = fmtDay(new Date(b.t));
+  });
+}
+function renderDailyTable(buckets, tools, step) {
+  const rows = buckets.filter((b) => tools.some((t) => b.counts[t])).reverse();
+  const cols = tools.length ? tools : TOOLS;
+  const tbl = h("table", {},
+    h("thead", {}, h("tr", {}, h("th", { text: step === 1 ? "Day" : "Week of" }), ...cols.map((t) => h("th", { class: "num", text: t })), h("th", { class: "num", text: "Total" }))),
+    h("tbody", {}, ...rows.map((b) => h("tr", {}, h("td", { text: fmtDay(new Date(b.t)) }),
+      ...cols.map((t) => h("td", { class: "num", text: b.counts[t] })),
+      h("td", { class: "num", text: cols.reduce((a, t) => a + b.counts[t], 0) })))));
+  $("table-daily").replaceChildren(rows.length ? tbl : h("div", { class: "empty", text: "No calls in this range" }));
+}
+
+// ---------- cumulative savings (single series line + crosshair)
+function renderSavings(s, rate) {
+  const box = $("chart-savings");
+  const pts = [...s.calls].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+  if (!pts.length) return emptyChart(box, "No calls in this range");
+  let acc = 0;
+  const series = pts.map((e) => ({ t: Date.parse(e.ts), v: (acc += savingsOf(e, rate)), e }));
+  const { svg, iw, ih } = frame(box, 220);
+  const maxV = niceMax(Math.max(acc, 1e-4));
+  yAxis(svg, iw, ih, maxV, money);
+  const g = el("g", { transform: `translate(${M.l},${M.t})` }, svg);
+  const t0 = Math.min(s.from, series[0].t), t1 = s.now;
+  const X = (t) => ((t - t0) / Math.max(1, t1 - t0)) * iw, Y = (v) => ih - (v / maxV) * ih;
+  // step line: savings jump at each call and hold until the next
+  let d = `M${X(t0)},${Y(0)}`;
+  for (const p of series) d += ` H${X(p.t)} V${Y(p.v)}`;
+  d += ` H${X(t1)}`;
+  const color = css("--series-1");
+  el("path", { d: d + ` V${ih} H${X(t0)} Z`, fill: color, "fill-opacity": 0.1, stroke: "none" }, g);
+  el("path", { d, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, g);
+  const last = series[series.length - 1];
+  el("circle", { cx: X(t1), cy: Y(last.v), r: 4, fill: color, stroke: css("--surface-1"), "stroke-width": 2 }, g);
+  const lbl = el("text", { x: X(t1) - 8, y: Y(last.v) - 10, "text-anchor": "end" }, g);
+  lbl.textContent = money(last.v);
+  lbl.style.fill = css("--text-secondary");
+  // x ticks
+  for (let i = 0; i <= 3; i++) {
+    const t = t0 + ((t1 - t0) * i) / 3;
+    el("text", { x: X(t), y: ih + 18, "text-anchor": i === 0 ? "start" : i === 3 ? "end" : "middle" }, g).textContent = fmtDay(new Date(t));
+  }
+  const cross = el("line", { y1: 0, y2: ih, stroke: css("--axis"), "stroke-width": 1, visibility: "hidden" }, g);
+  const mark = el("circle", { r: 4, fill: color, stroke: css("--surface-1"), "stroke-width": 2, visibility: "hidden" }, g);
+  const hit = el("rect", { x: 0, y: 0, width: iw, height: ih, fill: "transparent" }, g);
+  hit.addEventListener("pointermove", (ev) => {
+    const bb = hit.getBoundingClientRect();
+    const tx = t0 + ((ev.clientX - bb.left) / bb.width) * (t1 - t0);
+    let best = series[0];
+    for (const p of series) if (Math.abs(p.t - tx) < Math.abs(best.t - tx)) best = p;
+    cross.setAttribute("x1", X(best.t)); cross.setAttribute("x2", X(best.t)); cross.setAttribute("visibility", "visible");
+    mark.setAttribute("cx", X(best.t)); mark.setAttribute("cy", Y(best.v)); mark.setAttribute("visibility", "visible");
+    showTip(ev, fmtTime(new Date(best.t)), [
+      { color, value: money(best.v), label: "cumulative" },
+      { value: "+" + money(savingsOf(best.e, rate)), label: `this ${best.e.tool} call` },
+    ]);
+  });
+  hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); mark.setAttribute("visibility", "hidden"); hideTip(); });
+}
+
+// ---------- latency vs input size (scatter, colored by tool)
+function renderScatter(s) {
+  const box = $("chart-scatter");
+  const pts = s.calls.filter((e) => !e.error && e.duration_ms != null);
+  const failed = s.calls.length - pts.length;
+  const tools = TOOLS.filter((t) => pts.some((e) => e.tool === t));
+  legend("legend-scatter", tools, true);
+  $("scatter-caption").textContent = "Each dot is one call; input is the local prompt size in tokens."
+    + (failed ? ` ${failed} failed call${failed > 1 ? "s" : ""} not shown.` : "");
+  if (!pts.length) return emptyChart(box, "No completed calls in this range");
+  const { svg, iw, ih } = frame(box, 240);
+  const maxY = niceMax(Math.max(...pts.map((e) => e.duration_ms)) / 1000);
+  const maxX = niceMax(Math.max(...pts.map((e) => e.local_prompt_tokens || 0), 1));
+  yAxis(svg, iw, ih, maxY, (v) => v + "s");
+  const g = el("g", { transform: `translate(${M.l},${M.t})` }, svg);
+  for (let i = 0; i <= 4; i++) {
+    const v = (maxX / 4) * i;
+    el("text", { x: (v / maxX) * iw, y: ih + 18, "text-anchor": i === 0 ? "start" : i === 4 ? "end" : "middle" }, g).textContent = compact(v);
+  }
+  const surface = css("--surface-1");
+  for (const e of pts) {
+    const cx = ((e.local_prompt_tokens || 0) / maxX) * iw, cy = ih - (e.duration_ms / 1000 / maxY) * ih;
+    const dot = el("circle", { cx, cy, r: 4, fill: toolColor(e.tool), stroke: surface, "stroke-width": 2 }, g);
+    const hit = el("circle", { cx, cy, r: 12, fill: "transparent", tabindex: 0 }, g);  // 24px target
+    const rows = [
+      { color: toolColor(e.tool), value: secs(e.duration_ms), label: e.tool },
+      { value: compact(e.local_prompt_tokens || 0), label: "prompt tokens" },
+      { value: compact(e.local_completion_tokens || 0), label: "completion tokens" },
+      { value: shortModel(e.model), label: e.mode ? e.mode.replace("_", " ") : "" },
+    ];
+    const show = (ev) => { dot.setAttribute("r", 6); showTip(ev, fmtTime(new Date(e.ts)), rows); };
+    hit.addEventListener("pointermove", show);
+    hit.addEventListener("focus", () => { const bb = hit.getBoundingClientRect(); show({ clientX: bb.right, clientY: bb.top }); });
+    const off = () => { dot.setAttribute("r", 4); hideTip(); };
+    hit.addEventListener("pointerleave", off); hit.addEventListener("blur", off);
+  }
+}
+
+// ---------- models table + read-guard meter
+function renderModels(s, rate) {
+  const by = new Map();
+  for (const e of s.calls) {
+    const m = e.model || "unknown";
+    if (!by.has(m)) by.set(m, []);
+    by.get(m).push(e);
+  }
+  if (!by.size) return $("models").replaceChildren(h("div", { class: "empty", text: "No calls in this range" }));
+  const rows = [...by.entries()].sort((a, b) => Date.parse(b[1].at(-1).ts) - Date.parse(a[1].at(-1).ts));
+  $("models").replaceChildren(h("table", {},
+    h("thead", {}, h("tr", {}, ...["Model", "Calls", "Failed", "Median latency", "Local tokens", "Saved"].map((c, i) => h("th", { class: i ? "num" : "", text: c })))),
+    h("tbody", {}, ...rows.map(([m, es]) => {
+      const durs = es.map((e) => e.duration_ms).filter((d) => d != null);
+      const isCurrent = m === state.data.status.configured_model;
+      return h("tr", {},
+        h("td", { title: m }, shortModel(m), isCurrent ? h("span", { class: "muted", text: "  current" }) : null),
+        h("td", { class: "num", text: es.length }),
+        h("td", { class: "num", text: es.filter((e) => e.error).length }),
+        h("td", { class: "num", text: secs(median(durs)) }),
+        h("td", { class: "num", text: compact(es.reduce((a, e) => a + (e.local_prompt_tokens || 0) + (e.local_completion_tokens || 0), 0)) }),
+        h("td", { class: "num", text: money(es.reduce((a, e) => a + savingsOf(e, rate), 0)) }));
+    }))));
+}
+function renderFunnel(s) {
+  const files = new Set(s.deflections.map((e) => e.file));
+  const summarized = new Set(state.data.entries.filter((e) => e.tool === "summarize").flatMap((e) => e.sources || []));
+  const followed = [...files].filter((f) => summarized.has(f)).length;
+  const box = $("funnel");
+  if (!files.size) return box.replaceChildren(h("p", { class: "caption", text: "No large-file reads were redirected in this range." }));
+  const pct = (followed / files.size) * 100;
+  box.replaceChildren(
+    h("div", { class: "meter", role: "meter", "aria-valuemin": 0, "aria-valuemax": files.size, "aria-valuenow": followed },
+      h("div", { style: `width:${pct}%` })),
+    h("div", { class: "caption", text: `${followed} of ${files.size} redirected files were then summarized locally (${pct.toFixed(0)}%). ${s.deflections.length} redirects in total.` }));
+}
+
+// ---------- request log
+function renderLog(s, rate) {
+  const rows = [...s.calls].sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts)).slice(0, 200);
+  $("log-note").textContent = s.calls.length > 200 ? `newest 200 of ${s.calls.length}` : `${s.calls.length} calls`;
+  if (!rows.length) return $("log").replaceChildren(h("div", { class: "empty", text: "No calls in this range" }));
+  const head = ["Time", "Tool", "Model", "Mode", "Input avoided", "Local in", "Local out", "Latency", "Saved", "Status", "Source"];
+  $("log").replaceChildren(h("table", {},
+    h("thead", {}, h("tr", {}, ...head.map((c, i) => h("th", { class: i >= 4 && i <= 8 ? "num" : "", text: c })))),
+    h("tbody", {}, ...rows.map((e) => {
+      const src = (e.sources || []).map((p) => p.split("/").pop()).join(", ");
+      return h("tr", {},
+        h("td", { text: fmtTime(new Date(e.ts)) }),
+        h("td", {}, h("span", { class: "tag" }, h("span", { class: "sw dotkey", style: `background:${toolColor(e.tool)}` }), e.tool)),
+        h("td", { title: e.model || "", text: shortModel(e.model) }),
+        h("td", { text: e.mode ? e.mode.replace("_", " ") + (e.n_chunks ? ` ×${e.n_chunks}` : "") : "–" }),
+        h("td", { class: "num", text: compact(e.input_tokens_avoided || 0) }),
+        h("td", { class: "num", text: compact(e.local_prompt_tokens || 0) }),
+        h("td", { class: "num", text: compact(e.local_completion_tokens || 0) }),
+        h("td", { class: "num", text: secs(e.duration_ms) }),
+        h("td", { class: "num", text: money(savingsOf(e, rate)) }),
+        h("td", { title: e.error || "" }, e.error ? h("span", { class: "err", text: "✕ failed" }) : h("span", { class: "ok", text: "✓ ok" })),
+        h("td", { class: "src", title: (e.sources || []).join("\n"), text: src || "–" }));
+    }))));
+}
+
+// ---------- status + orchestration
+function renderStatus() {
+  const st = state.data.status;
+  const color = st.active ? css("--series-2") : st.running ? css("--good") : css("--text-muted");
+  const text = st.active
+    ? `Working: ${st.active.tool} for ${Math.round(Date.now() / 1000 - st.active.started)}s`
+    : st.running ? "Server running" : "Server stopped";
+  $("status").replaceChildren(h("span", { class: "dot", style: `background:${color}` }),
+    h("span", { text: `${text} · ${shortModel(st.configured_model)}` }));
+}
+function render() {
+  if (!state.data) return;
+  const pricing = state.data.pricing;
+  const sel = $("price");
+  if (!sel.options.length) {
+    for (const m of Object.keys(pricing)) sel.append(h("option", { value: m, text: `Savings at ${m} rates` }));
+  }
+  if (!pricing[state.price]) state.price = Object.keys(pricing)[0];
+  sel.value = state.price;
+  const rate = pricing[state.price];
+  $("price-note").textContent = `$${rate[0]} / $${rate[1]} per M in/out`;
+  for (const b of $("range").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.v === state.range));
+  $("tool").value = state.tool;
+
+  const s = slice();
+  renderStatus();
+  renderKpis(s, rate);
+  renderDaily(s);
+  renderSavings(s, rate);
+  renderScatter(s);
+  renderModels(s, rate);
+  renderFunnel(s);
+  renderLog(s, rate);
+}
+
+async function load() {
+  // Refetch keeps the frame: dim (never blank) only if the poll is slow, so the
+  // routine 10s refresh doesn't flicker.
+  const dim = setTimeout(() => $("app").classList.add("stale"), 400);
+  try {
+    const r = await fetch("/api/data", { cache: "no-store" });
+    state.data = await r.json();
+    $("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+    render();
+  } catch (err) {
+    $("updated").textContent = "Dashboard server unreachable – is `./llm dashboard` still running?";
+  } finally {
+    clearTimeout(dim);
+    $("app").classList.remove("stale");
+  }
+}
+
+$("range").addEventListener("click", (ev) => {
+  const v = ev.target.dataset?.v; if (!v) return;
+  state.range = v; store.set("range", v); render();
+});
+$("tool").addEventListener("change", (ev) => { state.tool = ev.target.value; store.set("tool", state.tool); render(); });
+$("price").addEventListener("change", (ev) => { state.price = ev.target.value; store.set("price", state.price); render(); });
+$("toggle-daily").addEventListener("click", () => {
+  const t = $("table-daily"); t.hidden = !t.hidden;
+  $("toggle-daily").textContent = t.hidden ? "Show data" : "Hide data";
+});
+let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(render, 150); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+
+load();
+setInterval(load, 10000);
+</script>
+</body>
+</html>

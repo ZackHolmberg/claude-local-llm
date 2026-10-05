@@ -129,11 +129,18 @@ directory), using the mlx server's exact token counts where available.
 
 ### Viewing the report
 
-Two equivalent ways:
+Three ways:
 
 1. **Ask Claude** — e.g. *"how much has the local model saved me?"* Claude
    calls the `savings_report` MCP tool.
 2. **From the shell:** `./llm report`
+3. **Dashboard:** `./llm dashboard` opens a live page at
+   http://127.0.0.1:8740 with spend avoided, calls per day by tool,
+   cumulative savings, latency vs. input size, per-model stats, the
+   read-guard follow-through rate and a request log. It refreshes every
+   10s, filters by date range and tool, and only listens on localhost (the
+   ledger contains file paths). Add `?theme=light` or `?theme=dark` to
+   override the OS theme.
 
 Sample output:
 

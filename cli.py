@@ -103,6 +103,12 @@ def cmd_report(_args) -> None:
     print(server._build_report())
 
 
+def cmd_dashboard(args) -> None:
+    import dashboard
+
+    dashboard.serve(args.port, open_browser=not args.no_open)
+
+
 def cmd_logs(args) -> None:
     if not server.SERVER_LOG.exists():
         print("No log file yet.")
@@ -140,6 +146,11 @@ def main() -> None:
     p.set_defaults(fn=cmd_ask)
 
     sub.add_parser("report", help="Show the token/cost savings report").set_defaults(fn=cmd_report)
+
+    p = sub.add_parser("dashboard", help="Open the live usage dashboard in a browser")
+    p.add_argument("--port", type=int, default=8740)
+    p.add_argument("--no-open", action="store_true", help="Serve without opening a browser")
+    p.set_defaults(fn=cmd_dashboard)
 
     p = sub.add_parser("logs", help="Show mlx server logs")
     p.add_argument("-f", "--follow", action="store_true")
