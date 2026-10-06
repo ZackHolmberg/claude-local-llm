@@ -89,8 +89,23 @@ def cmd_use(args) -> None:
         print("Server not running; the new model loads on next start.")
 
 
+def cmd_think(args) -> None:
+    config = server._config()
+    think = config.setdefault("think", {})
+    if args.use:
+        if args.use not in server.THINK_USES or args.state not in ("on", "off"):
+            sys.exit(f"usage: llm think [{'|'.join(server.THINK_USES)} on|off]")
+        think[args.use] = args.state == "on"
+        server.CONFIG_PATH.write_text(json.dumps(config, indent=2) + "\n")
+    budget = config.get("think_tokens", server.THINK_TOKENS)
+    for use in server.THINK_USES:
+        print(f"  {use:<14} {'on' if think.get(use) else 'off'}")
+    print(f"\n  Thinking budget: {budget} tokens per call (\"think_tokens\" in config.json).")
+    print("  Takes effect on the next call; no restart needed.")
+
+
 def cmd_ask(args) -> None:
-    text, usage = server._generate(args.prompt, max_tokens=args.max_tokens)
+    text, usage = server._generate(args.prompt, max_tokens=args.max_tokens, use=args.use)
     print(text)
     print(
         f"\n[{usage.get('prompt_tokens', '?')} prompt + "
@@ -143,7 +158,14 @@ def main() -> None:
     p = sub.add_parser("ask", help="One-off prompt against the local model")
     p.add_argument("prompt")
     p.add_argument("--max-tokens", type=int, default=1024)
+    p.add_argument("--use", default="delegate", choices=server.THINK_USES,
+                   help="use case whose thinking setting applies (default: delegate)")
     p.set_defaults(fn=cmd_ask)
+
+    p = sub.add_parser("think", help="Show or set thinking per use case")
+    p.add_argument("use", nargs="?", help="|".join(server.THINK_USES))
+    p.add_argument("state", nargs="?", help="on|off")
+    p.set_defaults(fn=cmd_think)
 
     sub.add_parser("report", help="Show the token/cost savings report").set_defaults(fn=cmd_report)
 

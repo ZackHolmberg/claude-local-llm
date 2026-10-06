@@ -73,10 +73,18 @@ ABSTAIN = "NOT_RELEVANT"
 GENERATION_TIMEOUT_S = 600
 STARTUP_TIMEOUT_S = 240
 
-# Qwen3.5 dropped Qwen3's "/no_think" soft switch; thinking is disabled via
-# the chat template instead (see _generate_inner). With thinking on, models
-# in bench/bench.py burned the whole token budget on mechanical tasks.
-CHAT_TEMPLATE_KWARGS = {"enable_thinking": False}
+# Thinking is set per use case in config.json ("think", read on every call so
+# `llm think` takes effect without a restart). Qwen3.5 dropped Qwen3's
+# "/no_think" soft switch, so it goes through the chat template's
+# enable_thinking (see _generate_inner). Off by default: with thinking on,
+# models in bench/bench.py burned the whole token budget on mechanical tasks.
+THINK_USES = ("delegate", "summarize", "summarize_map", "edit")
+# Reasoning tokens a thinking call gets on top of its max_tokens (~22 tok/s
+# on Qwen3.5-9B, so 4096 is ~3 min). Override with "think_tokens".
+THINK_TOKENS = 4096
+# Qwen's recommended thinking-mode sampling. At low temperature it loops,
+# re-checking a finished answer ("Wait, check again...") until out of budget.
+THINK_SAMPLING = {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5}
 # Uncapped, mlx_lm.server's prompt cache grew to 7.4 GB beside the model and
 # pushed a 24 GB Mac into swap, slowing prompt processing ~10x. Delegated
 # inputs rarely repeat, so a small cap loses almost nothing.
@@ -253,16 +261,48 @@ def _log_usage(
         f.write(json.dumps(entry) + "\n")
 
 
-def _generate(prompt: str, max_tokens: int, temperature: float = 0.2) -> tuple[str, dict]:
+def _thinking(use: str) -> bool:
+    """Whether calls for this use case think (config.json "think", default off)."""
+    return bool((_config().get("think") or {}).get(use, False))
+
+
+def _generate(
+    prompt: str, max_tokens: int, temperature: float = 0.2, use: str = "delegate"
+) -> tuple[str, dict]:
     _mark_active("local model")
     try:
-        return _generate_inner(prompt, max_tokens, temperature)
+        think = _thinking(use)
+        if not think:
+            return _generate_inner(prompt, max_tokens, temperature, False)
+        budget = int(_config().get("think_tokens", THINK_TOKENS))
+        try:
+            text, usage = _generate_inner(prompt, max_tokens + budget, temperature, True)
+        except _OutOfThought as e:
+            # Ran out mid-thought (usually looping on a finished answer): keep
+            # the reasoning and have it write the final answer from it.
+            text, usage = _generate_inner(
+                f"{prompt}\n\nYour analysis so far (it ran out of room before "
+                f"answering):\n{e.reasoning[:16_000]}\n\nWrite only the final answer now.",
+                max_tokens, temperature, False,
+            )
+            usage["completion_tokens"] = usage.get("completion_tokens", 0) + e.tokens
+        usage["thinking"] = True
+        return text, usage
     finally:
         _clear_active()
 
 
-def _generate_inner(prompt: str, max_tokens: int, temperature: float) -> tuple[str, dict]:
+class _OutOfThought(RuntimeError):
+    def __init__(self, reasoning: str, tokens: int):
+        super().__init__("local model ran out of tokens while thinking")
+        self.reasoning, self.tokens = reasoning, tokens
+
+
+def _generate_inner(
+    prompt: str, max_tokens: int, temperature: float, think: bool
+) -> tuple[str, dict]:
     _ensure_server()
+    sampling = THINK_SAMPLING if think else {"temperature": temperature}
     resp = httpx.post(
         f"{BASE_URL}/v1/chat/completions",
         json={
@@ -272,10 +312,10 @@ def _generate_inner(prompt: str, max_tokens: int, temperature: float) -> tuple[s
                 {"role": "user", "content": prompt},
             ],
             "max_tokens": max_tokens,
-            "temperature": temperature,
-            "chat_template_kwargs": CHAT_TEMPLATE_KWARGS,
+            **sampling,
+            "chat_template_kwargs": {"enable_thinking": think},
         },
-        timeout=GENERATION_TIMEOUT_S,
+        timeout=GENERATION_TIMEOUT_S * (2 if think else 1),
     )
     resp.raise_for_status()
     data = resp.json()
@@ -289,6 +329,8 @@ def _generate_inner(prompt: str, max_tokens: int, temperature: float) -> tuple[s
     raw = message.get("content")
     if not raw:
         reasoning = (message.get("reasoning") or "").strip()
+        if reasoning and think:
+            raise _OutOfThought(reasoning, (data.get("usage") or {}).get("completion_tokens", 0))
         if reasoning:
             raise RuntimeError(
                 f"local model produced only reasoning, no answer "
@@ -330,7 +372,7 @@ def delegate(
     try:
         gathered, file_chars = _gather_input(input_files, input_text)
         prompt = f"{instruction}\n\n{gathered}" if gathered else instruction
-        result, usage = _generate(prompt, max_tokens)
+        result, usage = _generate(prompt, max_tokens, use="delegate")
     except Exception as e:
         _log_usage(
             "delegate", {}, 0, 0, 0,
@@ -403,7 +445,7 @@ def summarize(
             result, usage = _map_reduce(task, gathered, max_tokens)
             mode = "map_reduce"
         else:
-            result, usage = _generate(f"{task}\n\n{gathered}", max_tokens)
+            result, usage = _generate(f"{task}\n\n{gathered}", max_tokens, use="summarize")
             mode = "single_shot"
     except Exception as e:
         _log_usage(
@@ -466,7 +508,7 @@ def _map_reduce(task: str, gathered: str, max_tokens: int) -> tuple[str, dict]:
             f"nothing in this excerpt relates to the task at all, reply "
             f"exactly {ABSTAIN}.\n\nTask: {task}\n\n{chunk}"
         )
-        text, usage = _generate(prompt, max_tokens=min(max_tokens, 512))
+        text, usage = _generate(prompt, max_tokens=min(max_tokens, 512), use="summarize_map")
         _acc(total, usage)
         if ABSTAIN in text and len(text) < 40:
             continue
@@ -485,6 +527,7 @@ def _map_reduce(task: str, gathered: str, max_tokens: int) -> tuple[str, dict]:
         f"large input. Using only this evidence, give a single coherent, "
         f"non-redundant answer to this task: {task}\n\n{combined}",
         max_tokens,
+        use="summarize",
     )
     _acc(total, usage)
     return text, total
@@ -548,7 +591,7 @@ def edit(
     )
     max_tokens = min(16_384, max(2_048, len(original) // 2))
     try:
-        result, usage = _generate(prompt, max_tokens=max_tokens)
+        result, usage = _generate(prompt, max_tokens=max_tokens, use="edit")
     except Exception as e:
         _fail("", f"{type(e).__name__}: {e}")
         raise

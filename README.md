@@ -47,7 +47,8 @@ Re-running `install.sh` is safe (idempotent).
 | `pull <model>` | Download a model from HuggingFace |
 | `models` | List locally cached models, marking the configured one |
 | `use <model>` | Switch models (persists to `config.json`; restarts if running) |
-| `ask "<prompt>"` | One-off generation, for testing (`--max-tokens N`) |
+| `ask "<prompt>"` | One-off generation, for testing (`--max-tokens N`, `--use <use case>`) |
+| `think [<use> on\|off]` | Show or set thinking per use case (`delegate`, `summarize`, `summarize_map`, `edit`) |
 | `report` | Token/cost savings report (same data as the `savings_report` MCP tool) |
 | `logs [-f]` | Show (or follow) the mlx server log |
 
@@ -232,6 +233,15 @@ pkill -f mlx_lm.server                          # stop
 tail -f mlx-server.log                          # logs
 .venv/bin/python server.py --report             # savings report
 ```
+
+Thinking is off for every tool by default (it burns the budget on mechanical
+work). Turn it on per use case with `llm think <use> on`; it's stored in
+`config.json` (`"think"`, plus `"think_tokens"`, the reasoning budget per call,
+default 4096) and read on every call, so no restart is needed. Thinking calls
+use Qwen's recommended sampling; if one still runs out of budget mid-thought,
+its reasoning so far is handed back for a final non-thinking answer.
+`summarize_map` is the per-chunk pass of large summaries, so turning it on
+multiplies the cost by the number of chunks.
 
 Model/port precedence is `LOCAL_LLM_MODEL`/`LOCAL_LLM_PORT` env vars (set on
 the MCP entry in `~/.claude.json`) > `config.json` (written by `llm use`) >
